@@ -1,0 +1,62 @@
+name:                soi
+version:             0.1.0.0
+synopsis:            A compiler for a less simple toy language
+description:         Please see README.md
+homepage:            https://github.com/HMPerson1/soi#readme
+license:             GPL-3
+license-file:        LICENSE
+author:              HMPerson1
+maintainer:          hmperson1@gmail.com
+copyright:           2016 HMPerson1
+category:            Language
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Language.Soi.Ast
+                       Language.Soi.Parser
+                       Language.Soi.Internal.Lexer
+                       Language.Soi.Internal.ParseMonad
+                       Language.Soi.Internal.Parser
+                       Language.Soi.Internal.SimpleAst
+                       Language.Soi.Internal.Simplify
+  ghc-options:         -Wall -fno-warn-warnings-deprecations
+  build-depends:       base >= 4.7 && < 5
+                     , classy-prelude
+                     , array
+                     , bytestring
+                     , containers
+                     , lens
+                     , llvm-general-pure
+                     , mtl
+                     , text
+  build-tools:         alex, happy
+  default-language:    Haskell2010
+  default-extensions:  NoImplicitPrelude
+
+executable soi-exe
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , soi
+                     , classy-prelude
+                     , bytestring
+                     , either
+  default-language:    Haskell2010
+  default-extensions:  NoImplicitPrelude
+
+test-suite soi-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       base
+                     , soi
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/HMPerson1/soi

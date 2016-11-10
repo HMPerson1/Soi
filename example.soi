@@ -1,0 +1,94 @@
+data Foo = {
+  val quux: Double, // <-- trailing commas are required
+}
+
+data Bar = {
+  val thing: Int,
+  var stuff: Int,
+}
+
+impl Bar = {
+  def moreStuff(self): Unit = {
+    self.stuff += 3;
+    self.stuff *= 2;
+  }
+}
+
+def main(): Unit = {
+  puts("HELLO WORLD");
+}
+
+def doStuff(a: Int, b: Foo): Bar =
+  Bar {
+    thing = (b.quux + a.toDouble).toInt, // no implicit casting
+    stuff = 3,
+  }
+
+def evenMoreStuff(a: Bar): Bar = {
+  val ret = a.clone(); // type inference
+  ret.moreStuff();     // implicit function call
+  Bar::moreStuff(ret); // explicit function call
+  ret.stuff *= 50;
+  ret
+}
+
+val myBar: Bar = Bar { thing = 3, stuff = 5, }; // <-- global variable
+def makeBar(): Bar = Bar { thing = 3, stuff = 5, }
+def makeMoreBar(): Bar = {
+  var x = 3;
+  x *= 2;
+  x -= 1;
+  puts("MAKING A BAR");
+  Bar { thing = 3, stuff = x, }
+}
+
+data IntCons = {
+  val value: Int,
+  val next: IntCons, // <-- forward reference ok
+}
+
+impl IntCons = {
+  def indexRec(self, idx: Int): Int = {
+    if idx == 0 then {
+      self.value;
+    } else {
+      self.next.indexRec(idx-1);
+    }
+  }
+
+  def indexLoop(self, idx: Int): Int = {
+    var current = self;
+    var i = idx;
+    loop {
+      if i == 0 then break;
+      i -= 1;
+      current = current.next;
+    }
+    current.value
+  }
+}
+
+def loopyLoop(): Unit = {
+  var x = -1;
+  'outer: loop {
+    x += 1;
+    if x > 10 then break;
+    var y = -1;
+    'inner: loop {
+      y += 1;
+      if y > 10 then break;
+      if x % 2 == 0 then continue 'outer; // continues the loop over x
+      if y % 2 == 0 then continue 'inner; // continues the loop over y
+      puts(itoa(x));
+      puts(itoa(y));
+      puts("\n");
+    }
+  }
+}
+
+def doNothing(): Unit = {}
+
+def doMoreNothing(): Unit = {
+  doNothing();
+  if (if True then True else False) then {} else {}
+}
