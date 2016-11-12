@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Language.Soi.Ast where
 
 import           ClassyPrelude
@@ -11,7 +13,7 @@ data TopLevelBinding
   = TlData   Data
   | TlImpl   Impl
   | TlFunc   Function
-  | TlVaBind VaBinding
+  | TlGlblVa VaDecl RValue
   deriving (Show, Eq)
 
 data Data = Data
@@ -162,10 +164,10 @@ data Self = Self
   deriving (Show, Eq)
 
 newtype Label = Label Text
-  deriving (Show, Eq)
+  deriving (Show, Eq, Hashable)
 
 newtype IdVar = IdVar Text
-  deriving (Show, Eq)
+  deriving (Show, Eq, Hashable)
 
 newtype IdData = IdData Text
-  deriving (Show, Eq)
+  deriving (Show, Eq, Hashable)

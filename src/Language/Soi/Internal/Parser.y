@@ -113,7 +113,7 @@ top_level_binding :: { TopLevelBinding }
         : data                                                  { TlData   $1 }
         | impl                                                  { TlImpl   $1 }
         | function                                              { TlFunc   $1 }
-        | va_binding                                            { TlVaBind $1 }
+        | va_decl '=' r_value                                   { TlGlblVa $1 $3 }
 
 data :: { Data }
         : 'data' ID_DATA '=' '{' data_fields '}'                { Data $2 $5 }
