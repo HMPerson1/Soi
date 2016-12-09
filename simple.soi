@@ -1,3 +1,19 @@
 def main(): Unit = {
-  printStr("Hello, World!\n");
+  printStr("Enter an integer: ");
+  var a = readInt();
+  printStr("Enter another integer: ");
+  var b = readInt();
+
+  printStr("\n");
+  printInt(a);
+  printStr(" + ");
+  printInt(b);
+  printStr(" + 5 = ");
+  printInt(add(a,add(b,5)));
+  printStr("\n");
+  printInt(doSomeMath(a,4,b));
+  printStr("\n");
 }
+
+def add(x: Int, y: Int): Int = x + y
+def doSomeMath(q: Int, w: Int, e: Int): Int = q * 3 + w * (e + 5)

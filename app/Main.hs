@@ -34,6 +34,7 @@ main =
     ast <- case parseFile inFile input of
       Right x -> return x
       Left  x -> die (show x)
+    print ast
     let llvmIr = emit inFile ast
     -- print llvmIr
     (asmFile, asmH) <- openTempFile "" (root ++ ".s")

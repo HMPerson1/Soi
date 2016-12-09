@@ -9,18 +9,19 @@ module Language.Soi.Internal.Emit where
 
 import           ClassyPrelude
 
-import           Control.Arrow                 ((+++))
+import           Control.Arrow                     ((+++))
 
-import qualified LLVM.General.AST              as L
-import qualified LLVM.General.AST.Constant     as C
-import qualified LLVM.General.AST.Global       as G
-import qualified LLVM.General.AST.Linkage      as L
-import           LLVM.General.AST.Type         hiding (void)
+import qualified LLVM.General.AST                  as L
+import qualified LLVM.General.AST.Constant         as C
+import qualified LLVM.General.AST.Global           as G
+import qualified LLVM.General.AST.IntegerPredicate as IP
+import qualified LLVM.General.AST.Linkage          as L
+import           LLVM.General.AST.Type             hiding (void)
 
 import           Language.Soi.Ast
 import           Language.Soi.Internal.Codegen
 import           Language.Soi.Internal.Prescan
-import qualified Language.Soi.Internal.StdLib  as StdLib
+import qualified Language.Soi.Internal.StdLib      as StdLib
 
 emit :: String -> File -> L.Module
 emit modName file = L.defaultModule
@@ -115,10 +116,36 @@ emitStmt (StAssign (LvVa (IdVar v)) rv) =
     b <- lookupVar v
     store (bindToOp b) rvOp
 
+emitStmt (StIf (IfStmt {..})) =
+  do
+    condBlkNm <- uniqueName (Just "if.cond")
+    thenBlkNm <- uniqueName (Just "if.then")
+    elseBlkNm <- uniqueName (Just "if.else")
+    endBlkNm <- uniqueName (Just "if.end")
+    emitCondBlk condBlkNm ifsCond thenBlkNm (maybe endBlkNm (const elseBlkNm) ifsElse)
+    emitNewBlock thenBlkNm (emitStmt ifsThen) endBlkNm
+    maybe (return ()) (\b -> emitNewBlock elseBlkNm (emitStmt b) endBlkNm) ifsElse
+    addNewBlock endBlkNm
+
+emitStmt (StBlock sb) = emitBlock sb
 emitStmt (StExpr rv) = void $ emitRValue rv
 
 emitStmt _ = error "stmt not implemented"
 
+emitCondBlk :: L.Name -> RValue -> L.Name -> L.Name -> Codegen ()
+emitCondBlk condBlkNm cond trueBlkNm falseBlkNm =
+  do
+    setTerm (L.Do (L.Br condBlkNm []))
+    addNewBlock condBlkNm
+    condOp <- emitRValue cond
+    setTerm (L.Do (L.CondBr condOp trueBlkNm falseBlkNm []))
+
+emitNewBlock :: L.Name -> Codegen () -> L.Name -> Codegen ()
+emitNewBlock blockNm stmts nextBlkNm =
+  do
+    addNewBlock blockNm
+    stmts
+    setTerm (L.Do (L.Br nextBlkNm []))
 
 emitRValue :: RValue -> Codegen L.Operand
 
@@ -134,26 +161,35 @@ emitRValue (RvCall (CallNormal (RvLVal (LvVa (IdVar f))) params)) =
     paramOps <- mapM emitRValue params
     call rty (bindToOp b) (toList paramOps)
 
-emitRValue (RvBinOp (BoAo op) v1 v2) =
+emitRValue (RvBinOp bo v1 v2) =
   do
     v1Op <- emitRValue v1
     v2Op <- emitRValue v2
-    (ao2lo op) v1Op v2Op
+    (bo2lo bo) v1Op v2Op
 
 emitRValue (RvLit (LitInt i)) = return (iconst i)
 emitRValue (RvLit (LitDouble f)) = return (fconst f)
 emitRValue (RvLit (LitString t)) = strconst t
 
-emitRValue _ = error "not implemented"
+emitRValue _ = error "rvalue not implemented"
 
-ao2lo :: ArithOp -> L.Operand -> L.Operand -> Codegen L.Operand
-ao2lo AoAdd = iadd
-ao2lo AoSub = isub
-ao2lo AoMul = imul
-ao2lo AoDiv = idiv
-ao2lo AoRem = irem
+bo2lo :: BinOp -> L.Operand -> L.Operand -> Codegen L.Operand
+bo2lo (BoAo AoAdd) = iadd
+bo2lo (BoAo AoSub) = isub
+bo2lo (BoAo AoMul) = imul
+bo2lo (BoAo AoDiv) = idiv
+bo2lo (BoAo AoRem) = irem
+bo2lo (BoCo co) = icmp ip
+  where
+    ip = case co of
+      CoEQ -> IP.EQ
+      CoNE -> IP.NE
+      CoLT -> IP.SLT
+      CoLE -> IP.SLE
+      CoGT -> IP.SGT
+      CoGE -> IP.SGE
 
-  {-
+{-
   str <- strconst "hi"
   _ <- call VoidType StdLib.printStr [str]
   o <- call i64 StdLib.readInt []
