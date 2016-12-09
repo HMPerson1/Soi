@@ -20,8 +20,10 @@ library
                        Language.Soi.Internal.Lexer
                        Language.Soi.Internal.ParseMonad
                        Language.Soi.Internal.Parser
-                       Language.Soi.Internal.SimpleAst
-                       Language.Soi.Internal.Simplify
+                       Language.Soi.Internal.Prescan
+                       Language.Soi.Internal.Codegen
+                       Language.Soi.Internal.Emit
+                       Language.Soi.Internal.StdLib
   ghc-options:         -Wall -fno-warn-warnings-deprecations
   build-depends:       base >= 4.7 && < 5
                      , classy-prelude
@@ -38,13 +40,19 @@ library
 
 executable soi-exe
   hs-source-dirs:      app
+  other-modules:       Control.Monad.LLVM
   main-is:             Main.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , soi
                      , classy-prelude
                      , bytestring
+                     , directory
                      , either
+                     , llvm-general
+                     , llvm-general-pure
+                     , mtl
+                     , process
   default-language:    Haskell2010
   default-extensions:  NoImplicitPrelude
 

@@ -32,9 +32,10 @@ data Function = Function
   { fnName   :: IdVar
   , fnParams :: FnParams
   , fnReturn :: IdData
-  , fnBody   :: Either RValue StmtBlock
+  , fnBody   :: FnBody
   }
   deriving (Show, Eq)
+type FnBody = Either RValue StmtBlock
 
 data FnParams = FnParams
   { fnpSelf :: Maybe Self
@@ -163,11 +164,11 @@ data ValOrVar = Val | Var
 data Self = Self
   deriving (Show, Eq)
 
-newtype Label = Label Text
+newtype Label = Label { unLabel :: Text }
   deriving (Show, Eq, Hashable)
 
-newtype IdVar = IdVar Text
+newtype IdVar = IdVar { unIdVar :: Text }
   deriving (Show, Eq, Hashable)
 
-newtype IdData = IdData Text
+newtype IdData = IdData { unIdData :: Text }
   deriving (Show, Eq, Hashable)

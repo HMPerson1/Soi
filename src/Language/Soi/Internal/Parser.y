@@ -113,7 +113,7 @@ top_level_binding :: { TopLevelBinding }
         : data                                                  { TlData   $1 }
         | impl                                                  { TlImpl   $1 }
         | function                                              { TlFunc   $1 }
-        | va_decl '=' r_value                                   { TlGlblVa $1 $3 }
+        | va_decl0 '=' r_value ';'                              { TlGlblVa $1 $3 }
 
 data :: { Data }
         : 'data' ID_DATA '=' '{' data_fields '}'                { Data $2 $5 }
@@ -127,7 +127,10 @@ data_fields0 :: { Seq VaDecl }
         | va_decl                                               { singleton $1 }
 
 va_decl :: { VaDecl }
-        : val_or_var ID_VAR type_sig ','                        { VaDecl $1 $2 $3 }
+        : va_decl0 ','                                          { $1 }
+
+va_decl0 :: { VaDecl }
+        : val_or_var ID_VAR type_sig                            { VaDecl $1 $2 $3 }
 
 impl :: { Impl }
         : 'impl' ID_DATA '=' '{' impl_funcs '}'                 { Impl $2 $5 }

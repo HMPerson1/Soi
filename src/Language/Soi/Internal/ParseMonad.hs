@@ -9,11 +9,7 @@ module Language.Soi.Internal.ParseMonad
     , ParseState
     , getInput
     , setInput
-    , getLexOpts
-    , pushLexOpts
-    , popLexOpts
     , AlexInput (..)
-    , LexOpts (..)
     , SrcLoc (..)
     , runParser
     , lexFail
@@ -43,7 +39,6 @@ data ParseError = ParseError String
 
 data ParseState = ParseState
   { input       :: !AlexInput
-  , lexOptStack :: ![LexOpts]
   }
   deriving (Show)
 
@@ -53,32 +48,12 @@ getInput = gets input
 setInput :: AlexInput -> P ()
 setInput inp = modify (\s->s{input=inp})
 
-getLexOpts :: P LexOpts
-getLexOpts = gets (traceShowId . maybe defaultLexOpts fst . uncons . lexOptStack)
-
-pushLexOpts :: LexOpts -> P ()
-pushLexOpts opts = modify (\(ParseState i optss) -> ParseState i (opts : optss))
-
-popLexOpts :: P ()
-popLexOpts = modify (\st@(ParseState i opts) ->
-                       case opts of
-                         (_:os) -> ParseState i os
-                         []     -> st)
-
 data AlexInput = AI
   { loc :: !SrcLoc
   , buf :: !LByteString
   , pos :: !Int64
   }
   deriving (Show)
-
-data LexOpts = LexOpts
-  { newlinesEnabled :: !Bool
-  }
-  deriving (Show)
-
-defaultLexOpts :: LexOpts
-defaultLexOpts = LexOpts False
 
 data SrcLoc = SrcLoc
   { file :: !String
@@ -90,10 +65,8 @@ data SrcLoc = SrcLoc
 runParser :: P a -> String -> LByteString -> Either ParseError a
 runParser p name contents = evalP p startState
   where
-    startState :: ParseState
-    startState = ParseState startAi startLo
+    startState = ParseState startAi
     startAi = AI (SrcLoc name 1 1) contents 0
-    startLo = repeat (LexOpts False)
 
 lexFail :: Maybe String -> P a
 lexFail msg =
