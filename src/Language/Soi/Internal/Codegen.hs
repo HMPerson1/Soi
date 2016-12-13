@@ -9,25 +9,32 @@ module Language.Soi.Internal.Codegen where
 
 import           ClassyPrelude
 
-import qualified Data.Sequence                           as Seq
-
 import           Control.Lens                            (ASetter', Cons, Snoc,
                                                           at, makeLenses, use,
                                                           view)
-import           Control.Lens.Cons                       (_Cons, _head)
-import           Control.Lens.Fold                       (pre)
-import           Control.Lens.Operators
+import           Control.Lens.Cons                       (_Cons, _head, _tail)
+import           Control.Lens.Fold                       (preuse)
+import           Control.Monad.Except                    (ExceptT, MonadError,
+                                                          catchError,
+                                                          runExceptT,
+                                                          throwError)
 import           Control.Monad.Reader                    (local)
 import           Control.Monad.State                     (MonadState, StateT,
                                                           execStateT)
+import           Data.List                               (genericLength)
+import qualified Data.Sequence                           as Seq
 
 import qualified LLVM.General.AST.CallingConvention      as CC
 import qualified LLVM.General.AST.Constant               as C
 import qualified LLVM.General.AST.Float                  as SF
 import           LLVM.General.AST.FloatingPointPredicate (FloatingPointPredicate)
 import           LLVM.General.AST.IntegerPredicate       (IntegerPredicate)
-import           LLVM.General.AST.Type                   (double, i1, i64, i8,
-                                                          ptr)
+import           LLVM.General.AST.Type                   (double, float, fp128,
+                                                          half, i1, i64, i8,
+                                                          ppc_fp128, ptr,
+                                                          x86_fp80)
+
+import           Control.Lens.Operators
 
 import           LLVM.General.AST
 
@@ -54,10 +61,27 @@ data BlockgenState = BlockgenState
 
 makeLenses ''BlockgenState
 
+data ScopeInfo = ScopeInfo
+  { _symbolTable :: LocalSymbolTable
+  }
+  deriving (Show, Eq)
+
+makeLenses ''ScopeInfo
+
+data LoopInfo = LoopInfo
+  { _lpLabel :: Maybe Text
+  , _lpBody  :: Name
+  , _lpExit  :: Name
+  }
+  deriving (Show, Eq)
+
+makeLenses ''LoopInfo
+
 data CodegenState = CodegenState
   { _currentBlock      :: BlockgenState
   , _blocks            :: Seq BlockgenState
-  , _symbolTableStack  :: [LocalSymbolTable]
+  , _scopeStack        :: [ScopeInfo]
+  , _loopStack         :: [LoopInfo]
   , _outOfScopeSymbols :: Seq LocalBinding
   , _nameSupply        :: NameSupply
   , _stringConstants   :: Seq (Name,ByteString)
@@ -75,14 +99,20 @@ data CodegenEnv = CodegenEnv
 
 makeLenses ''CodegenEnv
 
-newtype Codegen a = Codegen { runCodegen :: StateT CodegenState (Reader CodegenEnv) a }
-  deriving (Functor, Applicative, Monad, MonadState CodegenState, MonadReader CodegenEnv)
+type CodegenError = String
+
+newtype Codegen a = Codegen
+  { runCodegen :: ExceptT CodegenError (StateT CodegenState (Reader CodegenEnv)) a
+  }
+  deriving
+    (Functor, Applicative, Monad,
+     MonadState CodegenState, MonadReader CodegenEnv, MonadError CodegenError)
 
 emptyBlock :: Name -> BlockgenState
 emptyBlock n = BlockgenState n empty Nothing
 
 emptyCodegenState :: CodegenState
-emptyCodegenState = CodegenState entryBlk empty empty empty emptyNameSupply empty
+emptyCodegenState = CodegenState entryBlk empty empty empty empty emptyNameSupply empty
   where
     entryBlk         = emptyBlock (UnName 0)
     emptyNameSupply  = singletonMap Nothing 1
@@ -91,6 +121,8 @@ execCodegen :: GlobalSymbolTable -> Text -> LocalSymbolTable -> Codegen a -> Cod
 execCodegen gbls tn args m = runIdentity
                            . (`runReaderT` env)
                            . (`execStateT` state)
+                           . runExceptT
+                           . (`catchError` error) -- TODO: better error reporting
                            . runCodegen
                            $ do newArgs <- stackifyArgs
                                 local (argumentsTable .~ newArgs) m
@@ -102,7 +134,7 @@ finalize :: CodegenState -> ([BasicBlock],[(Name,ByteString)])
 finalize cs = (finalBlocks,toList(cs^.stringConstants))
   where
     finalBlocks = toList . map mkBlock $ bs
-    bs = cs^.blocks |> cs^.currentBlock & _head . instrs %~ (genAllocas (cs^.outOfScopeSymbols) <>)
+    bs = genAllocas (cs^.outOfScopeSymbols) $ cs^.blocks |> cs^.currentBlock
     mkBlock BlockgenState {..} =
       BasicBlock _blockName
                  (toList _instrs)
@@ -193,7 +225,7 @@ store :: Operand -> Operand -> Codegen ()
 store pt val = currentBlock . instrs |>= Do (Store False pt val Nothing 0 [])
 
 getelemptr :: Type -> Operand -> Integer -> Codegen Operand
-getelemptr ty arr idx = instr (ptr ty) (GetElementPtr True arr [iconst 0, iconst idx] [])
+getelemptr ptTy arr idx = instr ptTy (GetElementPtr True arr [iconst 0, iconst idx] [])
 
 call :: Type -> Operand -> [Operand] -> Codegen Operand
 call ty func args = instr ty Call
@@ -211,45 +243,43 @@ call ty func args = instr ty Call
 --------------------------------------------------------------------------------
 
 newScope :: Codegen ()
-newScope = symbolTableStack <|= mempty
+newScope = scopeStack <|= ScopeInfo mempty
 
 declScopedVar :: Type -> Text -> Codegen LocalBinding
 declScopedVar ty var =
   do
     nm <- uniqueName (Just var)
     let bd = LocalBinding ty nm
-    table <- fromMaybe (error "no scope") <$> use (symbolTableStack . pre _head)
+    table <- maybeThrow "no scope" $ preuse (scopeStack . _head . symbolTable)
     case lookup var table of
-      Nothing -> symbolTableStack . _head . at var <?= bd
-      Just _  -> terror ("variable/parameter defined twice: " ++ var)
+      Nothing -> scopeStack . _head . symbolTable . at var <?= bd
+      Just _  -> throwError ("variable/parameter defined twice: " ++ unpack var)
 
 lookupVar :: Text -> Codegen AnyBinding
 lookupVar var =
   do
-    scopeStack <- use symbolTableStack
+    stack <- use scopeStack
     args <- view argumentsTable
     gbls <- view globalsTable
-    return $ case (headMay . mapMaybe (lookup var) $ scopeStack) of
-      Just b  -> AL b
+    case (headMay . mapMaybe (lookup var . view symbolTable) $ stack) of
+      Just b  -> return (AL b)
       Nothing -> case (lookup var args) of
-        Just b  -> AL b
+        Just b  -> return (AL b)
         Nothing -> case (lookup var gbls) of
-          Just b  -> AG b
-          Nothing -> die
-  where
-    die = error ("use of undeclared variable: " ++ unpack var)
+          Just b  -> return (AG b)
+          Nothing -> throwError ("use of undeclared variable: " ++ unpack var)
 
 endScope :: Codegen ()
 endScope =
   do
-    (symTab,restSymTab) <- fromMaybe die <$> use (symbolTableStack . pre _Cons)
-    outOfScopeSymbols <>= (fromList . map snd . mapToList $ symTab)
-    symbolTableStack .= restSymTab
-  where
-    die = error "no scope to close"
+    (scope,restScope) <- maybeThrow "no scope to close" $ preuse (scopeStack . _Cons)
+    outOfScopeSymbols <>= (fromList . map snd . mapToList . view symbolTable $ scope)
+    scopeStack .= restScope
 
-genAllocas :: Seq LocalBinding -> Seq (Named Instruction)
-genAllocas = map (\(LocalBinding ty nm) -> (nm := (Alloca ty Nothing 0 [])))
+genAllocas :: Seq LocalBinding -> Seq BlockgenState -> Seq BlockgenState
+genAllocas bds = _head . instrs %~ (map genAlloca bds <>)
+  where
+    genAlloca (LocalBinding ty nm) = nm := (Alloca ty Nothing 0 [])
 
 stackifyArgs :: Codegen LocalSymbolTable
 stackifyArgs = view argumentsTable >>= mapM sfyArg
@@ -262,22 +292,22 @@ stackifyArgs = view argumentsTable >>= mapM sfyArg
         return (LocalBinding ty newNm)
 
 --------------------------------------------------------------------------------
--- String Constants
+-- Loop Helpers
 --------------------------------------------------------------------------------
 
-strconst :: Text -> Codegen Operand
-strconst str =
-  do
-    nm <- use stringConstants
-    fnNm <- view functionName
-    let name = Name (unpack fnNm ++ ".str" ++ show (Seq.length nm))
-        bytes = encodeUtf8 str `snoc` 0
-    stringConstants |>= (name,bytes)
-    let b = AG (GlobalBinding (ArrayType (fromIntegral (length bytes)) i8) name)
-    getelemptr (ptr i8) (bindToOp b) 0
+newLoop :: LoopInfo -> Codegen ()
+newLoop li = loopStack <|= li
+
+findLoop :: Maybe Text -> Codegen LoopInfo
+findLoop Nothing = maybeThrow "no enclosing loop" $ preuse (loopStack . _head)
+findLoop (Just lbl) = maybeThrow ("no enclosing loop with label " ++ unpack lbl)
+                      $ find ((== Just lbl) . view lpLabel) <$> use loopStack
+
+endLoop :: Codegen ()
+endLoop = loopStack <~ (maybeThrow "no enclosing loop" $ preuse (loopStack . _tail))
 
 --------------------------------------------------------------------------------
--- Utils
+-- LLVM Utils
 --------------------------------------------------------------------------------
 
 f64 :: Type
@@ -291,11 +321,69 @@ bindType :: AnyBinding -> Type
 bindType (AL (LocalBinding ty _)) = ty
 bindType (AG (GlobalBinding ty _)) = ty
 
+opType :: Operand -> Type
+opType (LocalReference ty _) = ty
+opType (ConstantOperand c) = constType c
+opType _ = error "metadata operands have no type"
+
+constType :: C.Constant -> Type
+constType (C.Int bits _) = IntegerType bits
+constType (C.Float (SF.Half _)) = half
+constType (C.Float (SF.Single _)) = float
+constType (C.Float (SF.Double _)) = double
+constType (C.Float (SF.Quadruple _ _)) = fp128
+constType (C.Float (SF.X86_FP80 _ _)) = x86_fp80
+constType (C.Float (SF.PPC_FP128 _ _)) = ppc_fp128
+constType (C.Null ty) = ty
+constType (C.Struct _ p es) = StructureType p (map constType es)
+constType (C.Array mty es) = ArrayType (genericLength es) mty
+constType (C.Vector es) = VectorType (genericLength es) (constType (headEx es))
+constType (C.Undef ty) = ty
+constType (C.BlockAddress _ _) = error "type of BlockAddress"
+constType (C.GlobalReference ty _) = ptr ty
+constType (C.GetElementPtr _ _ _) = error "type of GetElementPtr too hard"
+constType (C.Trunc _ ty) = ty
+constType (C.ZExt _ ty) = ty
+constType (C.SExt _ ty) = ty
+constType (C.FPToUI _ ty) = ty
+constType (C.FPToSI _ ty) = ty
+constType (C.UIToFP _ ty) = ty
+constType (C.SIToFP _ ty) = ty
+constType (C.FPTrunc _ ty) = ty
+constType (C.FPExt _ ty) = ty
+constType (C.PtrToInt _ ty) = ty
+constType (C.IntToPtr _ ty) = ty
+constType (C.BitCast _ ty) = ty
+constType (C.AddrSpaceCast _ ty) = ty
+constType (C.Select _ tv _) = constType tv
+constType (C.ExtractElement v _) = let (VectorType _ e) = constType v in e
+constType (C.InsertElement v _ _) = constType v
+constType (C.ShuffleVector v1 _ m) =
+  let (VectorType _ e, VectorType n _) = (constType v1, constType m) in VectorType n e
+constType (C.ExtractValue _ _) = error "type of ExtractValue too hard"
+constType (C.InsertValue a _ _) = constType a
+constType x = constType (C.operand0 x)
+
 iconst :: Integer -> Operand
 iconst i = ConstantOperand (C.Int 64 i)
 
 fconst :: Double -> Operand
 fconst f = ConstantOperand (C.Float (SF.Double f))
+
+strconst :: Text -> Codegen Operand
+strconst str =
+  do
+    nm <- use stringConstants
+    fnNm <- view functionName
+    let name = Name (unpack fnNm ++ ".str" ++ show (Seq.length nm))
+        bytes = encodeUtf8 str `snoc` 0
+    stringConstants |>= (name,bytes)
+    let b = AG (GlobalBinding (ArrayType (fromIntegral (length bytes)) i8) name)
+    getelemptr (ptr i8) (bindToOp b) 0
+
+--------------------------------------------------------------------------------
+-- Misc. Utils
+--------------------------------------------------------------------------------
 
 infixl 4 |>=
 
@@ -306,3 +394,6 @@ infixl 4 <|=
 
 (<|=) :: (MonadState s m, Cons a a e e) => ASetter' s a -> e -> m ()
 l <|= e = l %= (e <|)
+
+maybeThrow :: MonadError e m => e -> m (Maybe b) -> m b
+maybeThrow e = (>>= maybe (throwError e) return)

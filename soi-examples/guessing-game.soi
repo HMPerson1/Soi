@@ -1,0 +1,28 @@
+def main(): Unit = {
+  printStr("Guessing game\n\n");
+  var guesses = 5;
+  var secret = 23;
+  loop {
+    printStr("Guess a number: ");
+    var guess = readInt();
+
+    if guess == secret then {
+      printStr("You win! :D\n");
+      break;
+    } else if guess < secret then {
+      printStr("Too low\n");
+    } else {
+      printStr("Too high\n");
+    }
+
+    guesses -= 1;
+    if guesses > 0 then {
+      printStr("You have ");
+      printInt(guesses);
+      printStr(" guesses left.\n");
+    } else {
+      printStr("You are out of guesses!\nYou loose! :(\n");
+      break;
+    }
+  }
+}

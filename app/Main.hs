@@ -34,11 +34,9 @@ main =
     ast <- case parseFile inFile input of
       Right x -> return x
       Left  x -> die (show x)
-    print ast
+    -- print ast
     let llvmIr = emit inFile ast
     -- print llvmIr
-    (asmFile, asmH) <- openTempFile "" (root ++ ".s")
-    hClose asmH
 
     res <- L.runL $ do
       c   <- L.context
@@ -49,6 +47,7 @@ main =
       tt  <- L.getDefaultTargetTriple
       li  <- L.getTargetLibraryInfo tt
 
+      -- L.writeLLVMAssemblyToFile (L.File (root++"-u.ll")) m
       -- lift $ putStrLn "linking..."
       L.linkModules True m lib
       let
@@ -67,14 +66,15 @@ main =
           }
       opt1r <- L.runPasses ps1s m
       opt2r <- L.runPasses ps2s m
-      unless (opt1r && opt2r) . lift $ hPutStrLn stderr ("optimising failed"::Text)
+      unless (opt1r && opt2r) . lift $ hPutStrLn stderr ("optimizing failed"::Text)
       -- lift $ putStrLn "writing..."
       -- L.writeLLVMAssemblyToFile (L.File (root++".ll")) m
+      (asmFile, asmH) <- lift $ openTempFile "" (root ++ ".s")
+      lift $ hClose asmH
       L.writeTargetAssemblyToFile tm (L.File asmFile) m
+      lift $ callCommand ("cc " ++ asmFile ++ " -o " ++ root)
+      lift $ removeFile asmFile
     unlessRight res error
-
-    callCommand ("cc " ++ asmFile ++ " -o " ++ root)
-    removeFile asmFile
 
 {-
 lexTest :: LByteString -> IO ()
