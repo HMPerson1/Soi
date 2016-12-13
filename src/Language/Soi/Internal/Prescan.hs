@@ -22,7 +22,7 @@ type AstBind = Either (A.Function, Maybe IdData) (A.VaDecl, A.RValue)
 
 fileInfo :: A.File -> FileInfo
 fileInfo (A.File {..}) =
-    FileInfo (foldr extractDatas mempty fileDecls) (foldr extractBinds mempty fileDecls)
+  FileInfo (foldr extractDatas mempty fileDecls) (foldr extractBinds mempty fileDecls)
 
 extractDatas :: A.TopLevelBinding -> HashMap IdData A.Data -> HashMap IdData A.Data
 extractDatas (A.TlData d@(A.Data {..})) = checkInsertMap dataName d
@@ -33,9 +33,7 @@ extractBinds (A.TlGlblVa d@(A.VaDecl {..}) init) = checkInsertMap vdlName (Right
 extractBinds (A.TlFunc f@(A.Function {..}))      = checkInsertMap fnName (Left (f,Nothing))
 extractBinds (A.TlImpl (A.Impl {..}))            = flip (foldr insertImplFn) implFns
   where
-    insertImplFn :: A.Function
-                 -> HashMap IdVar AstBind
-                 -> HashMap IdVar AstBind
+    insertImplFn :: A.Function -> HashMap IdVar AstBind -> HashMap IdVar AstBind
     insertImplFn f@(A.Function {..}) = checkInsertMap (prefixImpl fnName) (Left (f, Just implName))
 
     prefixImpl :: IdVar -> IdVar
@@ -43,7 +41,8 @@ extractBinds (A.TlImpl (A.Impl {..}))            = flip (foldr insertImplFn) imp
 
 extractBinds _ = id
 
-checkInsertMap :: forall map. (Show (ContainerKey map), IsMap map)
+checkInsertMap :: forall map.
+                  (Show (ContainerKey map), IsMap map)
                => ContainerKey map -> MapValue map -> map -> map
 checkInsertMap k v = alterMap f k
   where

@@ -73,7 +73,7 @@ tokens :-
   \" (\\.|[^\\\"])* \"          { string }
   @dataid                       { tokF (TokIdData . IdData . toStrict . decodeUtf8) }
   @varid                        { tokF (TokIdVar  . IdVar  . toStrict . decodeUtf8) }
-  \' @varid                     { tokF (TokLabel  . Label  . toStrict . decodeUtf8 . unsafeTail) }
+  \' @varid                     { tokF (TokLabel  . Label  . toStrict . decodeUtf8 . tailEx) }
 
 {
 type Action = LByteString -> Int64 -> AlexInput -> P Token

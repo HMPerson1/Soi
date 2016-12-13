@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE PatternSynonyms            #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
@@ -29,10 +30,8 @@ import qualified LLVM.General.AST.Constant               as C
 import qualified LLVM.General.AST.Float                  as SF
 import           LLVM.General.AST.FloatingPointPredicate (FloatingPointPredicate)
 import           LLVM.General.AST.IntegerPredicate       (IntegerPredicate)
-import           LLVM.General.AST.Type                   (double, float, fp128,
-                                                          half, i1, i64, i8,
-                                                          ppc_fp128, ptr,
-                                                          x86_fp80)
+import           LLVM.General.AST.Type                   (ptr)
+import qualified LLVM.General.AST.Type                   as T
 
 import           Control.Lens.Operators
 
@@ -177,46 +176,46 @@ instr ty i =
     return (LocalReference ty n)
 
 iadd :: Operand -> Operand -> Codegen Operand
-iadd op1 op2 = instr i64 (Add False False op1 op2 [])
+iadd op1 op2 = instr I64 (Add False False op1 op2 [])
 
 isub :: Operand -> Operand -> Codegen Operand
-isub op1 op2 = instr i64 (Sub False False op1 op2 [])
+isub op1 op2 = instr I64 (Sub False False op1 op2 [])
 
 imul :: Operand -> Operand -> Codegen Operand
-imul op1 op2 = instr i64 (Mul False False op1 op2 [])
+imul op1 op2 = instr I64 (Mul False False op1 op2 [])
 
 idiv :: Operand -> Operand -> Codegen Operand
-idiv op1 op2 = instr i64 (SDiv False op1 op2 [])
+idiv op1 op2 = instr I64 (SDiv False op1 op2 [])
 
 irem :: Operand -> Operand -> Codegen Operand
-irem op1 op2 = instr i64 (SRem op1 op2 [])
+irem op1 op2 = instr I64 (SRem op1 op2 [])
 
 ineg :: Operand -> Codegen Operand
 ineg = isub (iconst 0)
 
 icmp :: IntegerPredicate -> Operand -> Operand -> Codegen Operand
-icmp ip op1 op2 = instr i1 (ICmp ip op1 op2 [])
+icmp ip op1 op2 = instr I1 (ICmp ip op1 op2 [])
 
 fadd :: Operand -> Operand -> Codegen Operand
-fadd op1 op2 = instr f64 (Add False False op1 op2 [])
+fadd op1 op2 = instr F64 (Add False False op1 op2 [])
 
 fsub :: Operand -> Operand -> Codegen Operand
-fsub op1 op2 = instr f64 (Sub False False op1 op2 [])
+fsub op1 op2 = instr F64 (Sub False False op1 op2 [])
 
 fmul :: Operand -> Operand -> Codegen Operand
-fmul op1 op2 = instr f64 (Mul False False op1 op2 [])
+fmul op1 op2 = instr F64 (Mul False False op1 op2 [])
 
 fdiv :: Operand -> Operand -> Codegen Operand
-fdiv op1 op2 = instr f64 (FDiv NoFastMathFlags op1 op2 [])
+fdiv op1 op2 = instr F64 (FDiv NoFastMathFlags op1 op2 [])
 
 frem :: Operand -> Operand -> Codegen Operand
-frem op1 op2 = instr f64 (FRem NoFastMathFlags op1 op2 [])
+frem op1 op2 = instr F64 (FRem NoFastMathFlags op1 op2 [])
 
 fneg :: Operand -> Codegen Operand
 fneg = fsub (fconst 0)
 
 fcmp :: FloatingPointPredicate -> Operand -> Operand -> Codegen Operand
-fcmp fp op1 op2 = instr i1 (FCmp fp op1 op2 [])
+fcmp fp op1 op2 = instr I1 (FCmp fp op1 op2 [])
 
 load :: Type -> Operand -> Codegen Operand
 load ty pt = instr ty (Load False pt Nothing 0 [])
@@ -310,8 +309,10 @@ endLoop = loopStack <~ (maybeThrow "no enclosing loop" $ preuse (loopStack . _ta
 -- LLVM Utils
 --------------------------------------------------------------------------------
 
-f64 :: Type
-f64 = double
+pattern F64 = FloatingPointType 64 IEEE
+pattern I64 = IntegerType 64
+pattern I8  = IntegerType 8
+pattern I1  = IntegerType 1
 
 bindToOp :: AnyBinding -> Operand
 bindToOp (AL (LocalBinding ty nm)) = LocalReference (ptr ty) nm
@@ -328,12 +329,12 @@ opType _ = error "metadata operands have no type"
 
 constType :: C.Constant -> Type
 constType (C.Int bits _) = IntegerType bits
-constType (C.Float (SF.Half _)) = half
-constType (C.Float (SF.Single _)) = float
-constType (C.Float (SF.Double _)) = double
-constType (C.Float (SF.Quadruple _ _)) = fp128
-constType (C.Float (SF.X86_FP80 _ _)) = x86_fp80
-constType (C.Float (SF.PPC_FP128 _ _)) = ppc_fp128
+constType (C.Float (SF.Half _)) = T.half
+constType (C.Float (SF.Single _)) = T.float
+constType (C.Float (SF.Double _)) = T.double
+constType (C.Float (SF.Quadruple _ _)) = T.fp128
+constType (C.Float (SF.X86_FP80 _ _)) = T.x86_fp80
+constType (C.Float (SF.PPC_FP128 _ _)) = T.ppc_fp128
 constType (C.Null ty) = ty
 constType (C.Struct _ p es) = StructureType p (map constType es)
 constType (C.Array mty es) = ArrayType (genericLength es) mty
@@ -378,8 +379,8 @@ strconst str =
     let name = Name (unpack fnNm ++ ".str" ++ show (Seq.length nm))
         bytes = encodeUtf8 str `snoc` 0
     stringConstants |>= (name,bytes)
-    let b = AG (GlobalBinding (ArrayType (fromIntegral (length bytes)) i8) name)
-    getelemptr (ptr i8) (bindToOp b) 0
+    let b = AG (GlobalBinding (ArrayType (fromIntegral (length bytes)) I8) name)
+    getelemptr (ptr I8) (bindToOp b) 0
 
 --------------------------------------------------------------------------------
 -- Misc. Utils

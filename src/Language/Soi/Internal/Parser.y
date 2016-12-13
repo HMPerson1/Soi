@@ -24,8 +24,8 @@ state 42 contains 1 shift/reduce conflicts.
 
 state 48 contains 1 shift/reduce conflicts.
 
-	  *** r_value0 -> 'self' .                                (rule 49)
-	      l_value -> 'self' . '.' l_value0                    (rule 51)
+	  *** r_value0 -> 'self' .
+	      l_value -> 'self' . '.' l_value0
 
     Conflicts: '.'
 
@@ -47,7 +47,7 @@ state 168 contains 1 shift/reduce conflicts.
     Conflicts: 'else'
 
 Example:
-    if a then if b; then c; else d;
+    if a then if b then c; else d;
 
 Shift parses as:
     if a then { if b then c; else d; }

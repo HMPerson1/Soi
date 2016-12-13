@@ -2,10 +2,11 @@
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TupleSections         #-}
 
-module Language.Soi.Internal.Emit where
+module Language.Soi.Internal.Emit (emit) where
 
 import           ClassyPrelude
 
@@ -21,19 +22,21 @@ import qualified LLVM.General.AST.Linkage                as L
 
 import qualified Language.Soi.Internal.StdLib            as StdLib
 
-import           LLVM.General.AST.Type                   hiding (void)
+import           LLVM.General.AST.Type                   (ptr)
 
 import           Language.Soi.Ast
 import           Language.Soi.Internal.Codegen
 import           Language.Soi.Internal.Prescan
 
+-- Block refers to Soi AST blocks
+-- LLBlock refers to LLVM IR BasicBlocks
+
 emit :: String -> File -> L.Module
 emit modName file = L.defaultModule
   { L.moduleName = modName
-  , L.moduleDefinitions =
-    StdLib.headers
-    ++ (map (convData . snd) . mapToList $ fileData)
-    ++ (concatMap (emitBind gblSymTab) . mapToList $ info)
+  , L.moduleDefinitions = StdLib.headers
+                          ++ (map (convData . snd) . mapToList $ fileData)
+                          ++ (concatMap (emitBind gblSymTab) . mapToList $ info)
   }
   where
     gblSymTab = unionWithKey (terror . ("can't redefine " ++)) fileSymTab StdLib.symbolTable
@@ -69,8 +72,8 @@ emitBind gblTab (tn,(n, Left (ret, argTab, body))) = fnDef:strsDef
         , G.linkage = L.Private
         , G.hasUnnamedAddr = True
         , G.isConstant = True
-        , G.type' = ArrayType (fromIntegral (length bytes)) i8
-        , G.initializer = Just (C.Array i8 (map (C.Int 8 . fromIntegral) (unpack bytes)))
+        , G.type' = L.ArrayType (fromIntegral (length bytes)) I8
+        , G.initializer = Just (C.Array I8 (map (C.Int 8 . fromIntegral) (unpack bytes)))
         }
 
 emitBind gblTab (tn,(n, Right (ty, rv))) = singleton $
@@ -85,7 +88,7 @@ emitFn gblTab retTy tn argTab body = finalize . execCodegen gblTab tn argTab $ l
   where
     llBody = case body of
       Left x -> emitRValueAndRet retTy x
-      Right x -> checkType retTy VoidType >> emitBlockAndRet x
+      Right x -> checkType retTy L.VoidType >> emitBlockAndRet x
 
 emitRValueAndRet :: L.Type -> RValue -> Codegen ()
 emitRValueAndRet retTy rv =
@@ -168,7 +171,7 @@ emitStmt (StIf (IfStmt {..})) =
 emitStmt (StBlock sb) = emitBlock sb
 emitStmt (StExpr rv) = void $ emitRValue rv
 
-emitStmt _ = error "stmt not implemented"
+emitStmt x = throwError ("stmt "++show x++" not implemented")
 
 emitCondLLBlock :: L.Name -> RValue -> L.Name -> L.Name -> Codegen ()
 emitCondLLBlock condBlkNm cond trueBlkNm falseBlkNm =
@@ -176,7 +179,7 @@ emitCondLLBlock condBlkNm cond trueBlkNm falseBlkNm =
     setTerm (L.Do (L.Br condBlkNm []))
     addNewBlock condBlkNm
     condOp <- emitRValue cond
-    checkType i1 (opType condOp)
+    checkType I1 (opType condOp)
     setTerm (L.Do (L.CondBr condOp trueBlkNm falseBlkNm []))
 
 emitNewLLBlock :: L.Name -> Codegen () -> L.Name -> Codegen ()
@@ -198,7 +201,7 @@ emitRValue (RvLVal (LvVa (IdVar v))) =
 emitRValue (RvCall (CallNormal (RvLVal (LvVa (IdVar f))) params)) =
   do
     b <- lookupVar f
-    let (FunctionType rty argTys _) = bindType b
+    let (L.FunctionType rty argTys _) = bindType b
     paramOps <- toList <$> mapM emitRValue params
     sequence_ (zipWith checkType (map opType paramOps) argTys)
     call rty (bindToOp b) paramOps
@@ -207,20 +210,27 @@ emitRValue (RvBinOp bo v1 v2) =
   do
     v1Op <- emitRValue v1
     v2Op <- emitRValue v2
-    let llo = case (opType v1Op, opType v2Op) of
-          (IntegerType 64, IntegerType 64) -> bo2illo
-          (FloatingPointType 64 IEEE, FloatingPointType 64 IEEE) -> bo2fllo
-          _ -> error "numerical operation on non-numerical type"
-    llo bo v1Op v2Op
+    case (opType v1Op, opType v2Op) of
+          (I64, I64) -> bo2illo bo v1Op v2Op
+          (F64, F64) -> bo2fllo bo v1Op v2Op
+          _          -> throwError "numerical operation on non-numerical type"
+
+emitRValue (RvUnOp UoNeg v) =
+  do
+    vOp <- emitRValue v
+    case opType vOp of
+      I64 -> isub (iconst 0) vOp
+      F64 -> fsub (fconst 0) vOp
+      _   -> throwError "numerical operation on non-numerical type"
 
 emitRValue (RvLit l) =
   case l of
     LitInt i    -> return (iconst i)
     LitDouble f -> return (fconst f)
     LitString t -> strconst t
-    LitUnit     -> return (L.ConstantOperand (C.Undef VoidType))
+    LitUnit     -> return (L.ConstantOperand (C.Undef L.VoidType))
 
-emitRValue _ = error "rvalue not implemented"
+emitRValue x = throwError ("rvalue "++show x++" not implemented")
 
 bo2illo :: BinOp -> L.Operand -> L.Operand -> Codegen L.Operand
 bo2illo (BoAo AoAdd) = iadd
@@ -254,18 +264,6 @@ bo2fllo (BoCo co) = fcmp fp
       CoGT -> FPP.OGT
       CoGE -> FPP.OGE
 
-{-
-  str <- strconst "hi"
-  _ <- call VoidType StdLib.printStr [str]
-  o <- call i64 StdLib.readInt []
-  _ <- call VoidType StdLib.printStr [str]
-  foo <- lookupVar "foo"
-  a <- call i64 (bindToOp foo) [o]
-  _ <- call VoidType StdLib.printInt [a]
-  setTerm (L.Do (L.Ret (Just (iconst 0)) []))
-  return ()
- -}
-
 emitVar :: GlobalSymbolTable -> Text -> L.Type -> RValue -> C.Constant
 emitVar _ _ ty _ = C.Undef ty -- TODO: UNDEFINED
 -- emitVar gblTab tn ty rv = error "var not implemented"
@@ -290,16 +288,14 @@ gblBindsInfo = mapFromList . map conv . mapToList
             Just implName -> [("self",(dataToType implName,L.Name "self"))]
             Nothing       ->
               error ("found `self` parameter outside of `impl` in: " ++ unpack (unIdVar fnName))
+        params = map (second (uncurry LocalBinding))
+                 . mappend selfParam
+                 . map (unIdVar . vdlName
+                        &&& ((dataToType . vdlType) &&& (L.Name . unpack . unIdVar . vdlName)))
+                 . toList
+                 $ fnpRest
       in
-        ( (dataToType fnReturn)
-        , ( map (second (uncurry (LocalBinding)))
-          . mappend selfParam
-          . map (unIdVar . vdlName
-                 &&& ((dataToType . vdlType) &&& (L.Name . unpack . unIdVar . vdlName)))
-          . toList
-          $ fnpRest)
-        , fnBody
-        )
+        (dataToType fnReturn, params, fnBody)
 
 convData :: Data -> L.Definition
 convData (Data {..}) = L.TypeDefinition llDataName (Just (L.StructureType False llFields))
@@ -310,11 +306,11 @@ convData (Data {..}) = L.TypeDefinition llDataName (Just (L.StructureType False 
 dataToType :: IdData -> L.Type
 dataToType (IdData {..}) =
   if
-    | unIdData == "Int"    -> i64
-    | unIdData == "Double" -> f64
-    | unIdData == "String" -> ptr i8
-    | unIdData == "Unit"   -> VoidType
-    | otherwise            -> NamedTypeReference (L.Name (unpack unIdData))
+    | unIdData == "Int"    -> I64
+    | unIdData == "Double" -> F64
+    | unIdData == "String" -> ptr I8
+    | unIdData == "Unit"   -> L.VoidType
+    | otherwise            -> L.NamedTypeReference (L.Name (unpack unIdData))
 
 checkType :: L.Type -> L.Type -> Codegen ()
 checkType ty1 ty2 = when (ty1 /= ty2) (throwError ("("++show ty1++") /= ("++show ty2++")"))

@@ -35,12 +35,12 @@ evalP :: P a -> ParseState -> Either ParseError a
 evalP (P p) st = runExcept (evalStateT p st)
 
 data ParseError = ParseError String
-  deriving (Show)
+  deriving (Show, Eq)
 
 data ParseState = ParseState
   { input       :: !AlexInput
   }
-  deriving (Show)
+  deriving (Show, Eq)
 
 getInput :: P AlexInput
 getInput = gets input
@@ -53,7 +53,7 @@ data AlexInput = AI
   , buf :: !LByteString
   , pos :: !Int64
   }
-  deriving (Show)
+  deriving (Show, Eq)
 
 data SrcLoc = SrcLoc
   { file :: !String
