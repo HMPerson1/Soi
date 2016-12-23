@@ -5,6 +5,7 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TupleSections              #-}
 
 module Language.Soi.Internal.Codegen where
 
@@ -110,24 +111,19 @@ newtype Codegen a = Codegen
 emptyBlock :: Name -> BlockgenState
 emptyBlock n = BlockgenState n empty Nothing
 
-emptyCodegenState :: CodegenState
-emptyCodegenState = CodegenState entryBlk empty empty empty empty emptyNameSupply empty
-  where
-    entryBlk         = emptyBlock (UnName 0)
-    emptyNameSupply  = singletonMap Nothing 1
-
 execCodegen :: GlobalSymbolTable -> Text -> LocalSymbolTable -> Codegen a -> CodegenState
 execCodegen gbls tn args m = runIdentity
-                           . (`runReaderT` env)
-                           . (`execStateT` state)
+                           . (`runReaderT` CodegenEnv gbls tn args)
+                           . (`execStateT` emptyCodegenState)
                            . runExceptT
                            . (`catchError` error) -- TODO: better error reporting
                            . runCodegen
                            $ do newArgs <- stackifyArgs
                                 local (argumentsTable .~ newArgs) m
   where
-    state = emptyCodegenState
-    env = CodegenEnv gbls tn args
+    emptyCodegenState = CodegenState entryBlk empty empty empty empty emptyNameSupply empty
+    entryBlk          = emptyBlock (UnName 0)
+    emptyNameSupply   = singletonMap Nothing 1
 
 finalize :: CodegenState -> ([BasicBlock],[(Name,ByteString)])
 finalize cs = (finalBlocks,toList(cs^.stringConstants))
@@ -154,6 +150,9 @@ uniqueName maybeString = mkName <$> mkId
       Nothing -> UnName w
       Just s  -> Name (unpack s ++ "." ++ show w)
 
+currentBlockName :: Codegen Name
+currentBlockName = use (currentBlock . blockName)
+
 setTerm :: Named Terminator -> Codegen ()
 setTerm t = currentBlock . term ?= t
 
@@ -175,44 +174,45 @@ instr ty i =
     currentBlock . instrs |>= (n := i)
     return (LocalReference ty n)
 
-iadd :: Operand -> Operand -> Codegen Operand
-iadd op1 op2 = instr I64 (Add False False op1 op2 [])
+phi :: Type -> [(Operand, Name)] -> Codegen Operand
+phi ty inc = instr ty (Phi ty inc [])
 
-isub :: Operand -> Operand -> Codegen Operand
-isub op1 op2 = instr I64 (Sub False False op1 op2 [])
-
-imul :: Operand -> Operand -> Codegen Operand
-imul op1 op2 = instr I64 (Mul False False op1 op2 [])
-
-idiv :: Operand -> Operand -> Codegen Operand
-idiv op1 op2 = instr I64 (SDiv False op1 op2 [])
-
-irem :: Operand -> Operand -> Codegen Operand
-irem op1 op2 = instr I64 (SRem op1 op2 [])
-
-ineg :: Operand -> Codegen Operand
+ineg, fneg, iinv, bnot :: Operand -> Codegen Operand
 ineg = isub (iconst 0)
+fneg = fsub (fconst 0)
+iinv = ixor (iconst (-1))
+bnot = bxor (bconst True)
+
+iadd, isub, imul, idiv, irem :: Operand -> Operand -> Codegen Operand
+iadd op1 op2 = instr I64 (Add  False False op1 op2 [])
+isub op1 op2 = instr I64 (Sub  False False op1 op2 [])
+imul op1 op2 = instr I64 (Mul  False False op1 op2 [])
+idiv op1 op2 = instr I64 (SDiv False       op1 op2 [])
+irem op1 op2 = instr I64 (SRem             op1 op2 [])
+
+fadd, fsub, fmul, fdiv, frem :: Operand -> Operand -> Codegen Operand
+fadd op1 op2 = instr F64 (FAdd NoFastMathFlags op1 op2 [])
+fsub op1 op2 = instr F64 (FSub NoFastMathFlags op1 op2 [])
+fmul op1 op2 = instr F64 (FMul NoFastMathFlags op1 op2 [])
+fdiv op1 op2 = instr F64 (FDiv NoFastMathFlags op1 op2 [])
+frem op1 op2 = instr F64 (FRem NoFastMathFlags op1 op2 [])
+
+band, bor, bxor :: Operand -> Operand -> Codegen Operand
+band op1 op2 = instr I1 (And op1 op2 [])
+bor  op1 op2 = instr I1 (Or  op1 op2 [])
+bxor op1 op2 = instr I1 (Xor op1 op2 [])
+
+iand, ior, ixor :: Operand -> Operand -> Codegen Operand
+iand op1 op2 = instr I64 (And op1 op2 [])
+ior  op1 op2 = instr I64 (Or  op1 op2 [])
+ixor op1 op2 = instr I64 (Xor op1 op2 [])
+
+ishl, ishr :: Operand -> Operand -> Codegen Operand
+ishl op1 op2 = instr I64 ( Shl False False op1 op2 [])
+ishr op1 op2 = instr I64 (AShr False       op1 op2 [])
 
 icmp :: IntegerPredicate -> Operand -> Operand -> Codegen Operand
 icmp ip op1 op2 = instr I1 (ICmp ip op1 op2 [])
-
-fadd :: Operand -> Operand -> Codegen Operand
-fadd op1 op2 = instr F64 (Add False False op1 op2 [])
-
-fsub :: Operand -> Operand -> Codegen Operand
-fsub op1 op2 = instr F64 (Sub False False op1 op2 [])
-
-fmul :: Operand -> Operand -> Codegen Operand
-fmul op1 op2 = instr F64 (Mul False False op1 op2 [])
-
-fdiv :: Operand -> Operand -> Codegen Operand
-fdiv op1 op2 = instr F64 (FDiv NoFastMathFlags op1 op2 [])
-
-frem :: Operand -> Operand -> Codegen Operand
-frem op1 op2 = instr F64 (FRem NoFastMathFlags op1 op2 [])
-
-fneg :: Operand -> Codegen Operand
-fneg = fsub (fconst 0)
 
 fcmp :: FloatingPointPredicate -> Operand -> Operand -> Codegen Operand
 fcmp fp op1 op2 = instr I1 (FCmp fp op1 op2 [])
@@ -232,7 +232,7 @@ call ty func args = instr ty Call
   , callingConvention = CC.C
   , returnAttributes = []
   , function = Right func
-  , arguments = fmap (\x->(x, [])) args
+  , arguments = fmap (,[]) args
   , functionAttributes = []
   , metadata = []
   }
@@ -364,6 +364,9 @@ constType (C.ShuffleVector v1 _ m) =
 constType (C.ExtractValue _ _) = error "type of ExtractValue too hard"
 constType (C.InsertValue a _ _) = constType a
 constType x = constType (C.operand0 x)
+
+bconst :: Bool -> Operand
+bconst b = ConstantOperand (C.Int 1 (if b then 1 else 0))
 
 iconst :: Integer -> Operand
 iconst i = ConstantOperand (C.Int 64 i)

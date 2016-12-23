@@ -113,6 +113,7 @@ data TokenClass
   | TokSemi
   | TokDot
   | TokBang
+  | TokTilde
   | TokAssign
   | TokBraceOpen
   | TokBraceClose
@@ -121,9 +122,9 @@ data TokenClass
   | TokComma
   | TokColon
   | TokDoubleColon
-  | TokArithOp     ArithOp
-  | TokArithAssign ArithOp
-  | TokCmpOp       CmpOp
+  | TokBinOp       BinOp
+  | TokArithAssign BinArithOp
+  | TokLitBool     Bool
   | TokLitInt      Integer
   | TokLitDouble   Double
   | TokLitString   Text

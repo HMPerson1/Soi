@@ -1,0 +1,13 @@
+def main(): Unit = {
+  printInt(if a() && b() then 0 else 1);
+}
+
+def a(): Bool = {
+  printStr("A");
+  true
+}
+
+def b(): Bool = {
+  printStr("B");
+  true
+}

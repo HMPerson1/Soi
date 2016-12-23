@@ -71,6 +71,7 @@ Shift parses as:
   ';'           { Token _ TokSemi }
   '.'           { Token _ TokDot }
   '!'           { Token _ TokBang }
+  '~'           { Token _ TokTilde }
   '='           { Token _ TokAssign }
   '{'           { Token _ TokBraceOpen }
   '}'           { Token _ TokBraceClose }
@@ -79,13 +80,22 @@ Shift parses as:
   ','           { Token _ TokComma }
   ':'           { Token _ TokColon }
   '::'          { Token _ TokDoubleColon }
-  '+'           { Token _ (TokArithOp AoAdd) }
-  '-'           { Token _ (TokArithOp AoSub) }
-  '*'           { Token _ (TokArithOp AoMul) }
-  '/'           { Token _ (TokArithOp AoDiv) }
-  '%'           { Token _ (TokArithOp AoRem) }
+  '+'           { Token _ (TokBinOp (Bao (Bano BanoAdd))) }
+  '-'           { Token _ (TokBinOp (Bao (Bano BanoSub))) }
+  '*'           { Token _ (TokBinOp (Bao (Bano BanoMul))) }
+  '/'           { Token _ (TokBinOp (Bao (Bano BanoDiv))) }
+  '%'           { Token _ (TokBinOp (Bao (Bano BanoRem))) }
+  '&'           { Token _ (TokBinOp (Bao (Babo BaboAnd))) }
+  '|'           { Token _ (TokBinOp (Bao (Babo BaboOr ))) }
+  '^'           { Token _ (TokBinOp (Bao (Babo BaboXor))) }
+  '<<'          { Token _ (TokBinOp (Bao (Baso BasoShl))) }
+  '>>'          { Token _ (TokBinOp (Bao (Baso BasoShr))) }
+  '&&'          { Token _ (TokBinOp (Blo BloAnd        )) }
+  '||'          { Token _ (TokBinOp (Blo BloOr         )) }
+  CMP_EQ_OP     { Token _ (TokBinOp (Bco (Bceo _      ))) }
+  CMP_ORD_OP    { Token _ (TokBinOp (Bco (Bcoo _      ))) }
   ARITH_ASSIGN  { Token _ (TokArithAssign $$) }
-  CMP_OP        { Token _ (TokCmpOp       $$) }
+  LIT_BOOL      { Token _ (TokLitBool     $$) }
   LIT_INT       { Token _ (TokLitInt      $$) }
   LIT_DOUBLE    { Token _ (TokLitDouble   $$) }
   LIT_STRING    { Token _ (TokLitString   $$) }
@@ -167,26 +177,57 @@ r_value :: { RValue }
         : constr                                                { RvConstr   $1 }
         | if_expr                                               { RvIf       $1 }
         | expr_block                                            { RvBlock    $1 }
+        | r_value11                                             { $1 }
+
+r_value11 :: { RValue }
+        : r_value11 '||' r_value10                              { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value10                                             { $1 }
+
+r_value10 :: { RValue }
+        : r_value10 '&&' r_value9                               { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value9                                              { $1 }
+
+r_value9 :: { RValue }
+        : r_value9 '|' r_value8                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value8                                              { $1 }
+
+r_value8 :: { RValue }
+        : r_value8 '^' r_value7                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value7                                              { $1 }
+
+r_value7 :: { RValue }
+        : r_value7 '&' r_value6                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value6                                              { $1 }
+
+r_value6 :: { RValue }
+        : r_value6 CMP_EQ_OP r_value5                           { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value5                                              { $1 }
+
+r_value5 :: { RValue }
+        : r_value5 CMP_ORD_OP r_value4                          { RvBinOp (tok2binop $2) $1 $3 }
         | r_value4                                              { $1 }
 
 r_value4 :: { RValue }
-        : r_value4 CMP_OP r_value3                              { RvBinOp (BoCo $2) $1 $3 }
+        : r_value4 '<<' r_value3                                { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value4 '>>' r_value3                                { RvBinOp (tok2binop $2) $1 $3 }
         | r_value3                                              { $1 }
 
 r_value3 :: { RValue }
-        : r_value3 '+' r_value2                                 { RvBinOp (BoAo AoAdd) $1 $3 }
-        | r_value3 '-' r_value2                                 { RvBinOp (BoAo AoSub) $1 $3 }
+        : r_value3 '+' r_value2                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value3 '-' r_value2                                 { RvBinOp (tok2binop $2) $1 $3 }
         | r_value2                                              { $1 }
 
 r_value2 :: { RValue }
-        : r_value2 '*' r_value1                                 { RvBinOp (BoAo AoMul) $1 $3 }
-        | r_value2 '/' r_value1                                 { RvBinOp (BoAo AoDiv) $1 $3 }
-        | r_value2 '%' r_value1                                 { RvBinOp (BoAo AoRem) $1 $3 }
+        : r_value2 '*' r_value1                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value2 '/' r_value1                                 { RvBinOp (tok2binop $2) $1 $3 }
+        | r_value2 '%' r_value1                                 { RvBinOp (tok2binop $2) $1 $3 }
         | r_value1                                              { $1 }
 
 r_value1 :: { RValue }
-        : '-' r_value0                                          { RvUnOp UoNeg $2 }
+        : '+' r_value0                                          { RvUnOp UoPos $2 }
+        | '-' r_value0                                          { RvUnOp UoNeg $2 }
         | '!' r_value0                                          { RvUnOp UoNot $2 }
+        | '~' r_value0                                          { RvUnOp UoInv $2 }
         | r_value0                                              { $1 }
 
 r_value0 :: { RValue }
@@ -278,7 +319,8 @@ maybe_else_stmt :: { Maybe Statement }
         | {- empty -}                                           { Nothing }
 
 literal :: { Literal }
-        : LIT_INT                                               { LitInt $1 }
+        : LIT_BOOL                                              { LitBool   $1 }
+        | LIT_INT                                               { LitInt    $1 }
         | LIT_DOUBLE                                            { LitDouble $1 }
         | LIT_STRING                                            { LitString $1 }
         | '(' ')'                                               { LitUnit }
@@ -289,3 +331,9 @@ val_or_var :: { ValOrVar }
 
 type_sig :: { IdData }
         : ':' ID_DATA                                           { $2 }
+
+{
+tok2binop :: Token -> BinOp
+tok2binop (Token _ (TokBinOp x)) = x
+tok2binop _ = error "tok2binop"
+}

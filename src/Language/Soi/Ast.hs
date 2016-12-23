@@ -77,7 +77,7 @@ data ExprBlock = ExprBlock
 data Statement
   = StVaBind      VaBinding
   | StAssign      LValue RValue
-  | StArithAssign LValue ArithOp RValue
+  | StArithAssign LValue BinArithOp RValue
   | StLoop        (Maybe Label) Statement
   | StBreak       (Maybe Label)
   | StContinue    (Maybe Label)
@@ -125,37 +125,71 @@ data IfExpr = IfExpr
   deriving (Show, Eq)
 
 data Literal
-  = LitInt    Integer
+  = LitBool   Bool
+  | LitInt    Integer
   | LitDouble Double
   | LitString Text
   | LitUnit
   deriving (Show, Eq)
 
 data UnOp
-  = UoNeg
-  | UoNot
+  = UoPos                       -- _IF
+  | UoNeg                       -- _IF
+  | UoInv                       -- _I_
+  | UoNot                       -- B__
   deriving (Show, Eq)
 
 data BinOp
-  = BoAo ArithOp
-  | BoCo CmpOp
+  = Bao BinArithOp
+  | Blo BinLogicOp
+  | Bco BinCmpOp
   deriving (Show, Eq)
 
-data ArithOp
-  = AoAdd
-  | AoSub
-  | AoMul
-  | AoDiv
-  | AoRem
+data BinArithOp                 -- ?I? (results in operand type; can be combined with assignment)
+  = Bano BinArithNumOp
+  | Babo BinArithBitOp
+  | Baso BinArithShiftOp
   deriving (Show, Eq)
 
-data CmpOp
-  = CoEQ
-  | CoNE
-  | CoLT
-  | CoLE
-  | CoGT
-  | CoGE
+data BinArithNumOp              -- _IF
+  = BanoAdd
+  | BanoSub
+  | BanoMul
+  | BanoDiv
+  | BanoRem
+  deriving (Show, Eq)
+
+data BinArithBitOp              -- BI_
+  = BaboAnd
+  | BaboOr
+  | BaboXor
+  deriving (Show, Eq)
+
+data BinArithShiftOp            -- _I_
+  = BasoShl
+  | BasoShr
+  deriving (Show, Eq)
+
+data BinLogicOp                 -- B__ (short circuits)
+  = BloAnd
+  | BloOr
+  deriving (Show, Eq)
+
+data BinCmpOp                   -- ?IF (always results in Boolean)
+  = Bceo BinCmpEqOp
+  | Bcoo BinCmpOrdOp
+  deriving (Show, Eq)
+
+data BinCmpEqOp                 -- BIF
+  = BceoEQ
+  | BceoNE
+  deriving (Show, Eq)
+
+data BinCmpOrdOp                -- _IF
+  = BcooLT
+  | BcooLE
+  | BcooGT
+  | BcooGE
   deriving (Show, Eq)
 
 data ValOrVar = Val | Var

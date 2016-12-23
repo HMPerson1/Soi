@@ -43,7 +43,6 @@ tokens :-
   "continue"                    { tok TokContinue }
   ";"                           { tok TokSemi }
   "."                           { tok TokDot }
-  "!"                           { tok TokBang }
   "="                           { tok TokAssign }
   "{"                           { tok TokBraceOpen }
   "}"                           { tok TokBraceClose }
@@ -52,22 +51,38 @@ tokens :-
   ","                           { tok TokComma }
   ":"                           { tok TokColon }
   "::"                          { tok TokDoubleColon }
-  "+"                           { tok (TokArithOp AoAdd) }
-  "-"                           { tok (TokArithOp AoSub) }
-  "*"                           { tok (TokArithOp AoMul) }
-  "/"                           { tok (TokArithOp AoDiv) }
-  "%"                           { tok (TokArithOp AoRem) }
-  "+="                          { tok (TokArithAssign AoAdd) }
-  "-="                          { tok (TokArithAssign AoSub) }
-  "*="                          { tok (TokArithAssign AoMul) }
-  "/="                          { tok (TokArithAssign AoDiv) }
-  "%="                          { tok (TokArithAssign AoRem) }
-  "=="                          { tok (TokCmpOp CoEQ) }
-  "!="                          { tok (TokCmpOp CoNE) }
-  "<"                           { tok (TokCmpOp CoLT) }
-  "<="                          { tok (TokCmpOp CoLE) }
-  ">"                           { tok (TokCmpOp CoGT) }
-  ">="                          { tok (TokCmpOp CoGE) }
+  "!"                           { tok TokBang }
+  "~"                           { tok TokTilde }
+  "+"                           { tok (TokBinOp (Bao (Bano BanoAdd))) }
+  "-"                           { tok (TokBinOp (Bao (Bano BanoSub))) }
+  "*"                           { tok (TokBinOp (Bao (Bano BanoMul))) }
+  "/"                           { tok (TokBinOp (Bao (Bano BanoDiv))) }
+  "%"                           { tok (TokBinOp (Bao (Bano BanoRem))) }
+  "&"                           { tok (TokBinOp (Bao (Babo BaboAnd))) }
+  "|"                           { tok (TokBinOp (Bao (Babo BaboOr ))) }
+  "^"                           { tok (TokBinOp (Bao (Babo BaboXor))) }
+  "<<"                          { tok (TokBinOp (Bao (Baso BasoShl))) }
+  ">>"                          { tok (TokBinOp (Bao (Baso BasoShr))) }
+  "&&"                          { tok (TokBinOp (Blo BloAnd)) }
+  "||"                          { tok (TokBinOp (Blo BloOr )) }
+  "=="                          { tok (TokBinOp (Bco (Bceo BceoEQ))) }
+  "!="                          { tok (TokBinOp (Bco (Bceo BceoNE))) }
+  "<"                           { tok (TokBinOp (Bco (Bcoo BcooLT))) }
+  "<="                          { tok (TokBinOp (Bco (Bcoo BcooLE))) }
+  ">"                           { tok (TokBinOp (Bco (Bcoo BcooGT))) }
+  ">="                          { tok (TokBinOp (Bco (Bcoo BcooGE))) }
+  "+="                          { tok (TokArithAssign (Bano BanoAdd)) }
+  "-="                          { tok (TokArithAssign (Bano BanoSub)) }
+  "*="                          { tok (TokArithAssign (Bano BanoMul)) }
+  "/="                          { tok (TokArithAssign (Bano BanoDiv)) }
+  "%="                          { tok (TokArithAssign (Bano BanoRem)) }
+  "&="                          { tok (TokArithAssign (Babo BaboAnd)) }
+  "|="                          { tok (TokArithAssign (Babo BaboOr )) }
+  "^="                          { tok (TokArithAssign (Babo BaboXor)) }
+  "<<="                         { tok (TokArithAssign (Baso BasoShl)) }
+  ">>="                         { tok (TokArithAssign (Baso BasoShr)) }
+  "true"                        { tok (TokLitBool True) }
+  "false"                       { tok (TokLitBool False) }
   @decimal                      { tokF (TokLitInt    . read . unpack . decodeUtf8) }
   @floating                     { tokF (TokLitDouble . read . unpack . decodeUtf8) }
   \" (\\.|[^\\\"])* \"          { string }

@@ -1,0 +1,9 @@
+def main(): Unit = {
+  var a = readInt() != 0;
+  var b = readInt() != 0;
+  var c = readInt() != 0;
+  printInt(b2i(!a ^^ b && c));
+  printStr("\n");
+}
+
+def b2i(b: Bool): Int = if b then 1 else 0

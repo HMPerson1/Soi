@@ -1,0 +1,22 @@
+def main(): Unit = {
+  loopyLoop();
+}
+
+def loopyLoop(): Unit = {
+  var x = -1;
+  'outer: loop {
+    x += 1;
+    if x > 10 then break;
+    var y = -1;
+    'inner: loop {
+      y += 1;
+      if y > 10 then break;
+      if x % 2 == 0 then continue 'outer; // continues the loop over x
+      if y % 2 == 0 then continue 'inner; // continues the loop over y
+      printInt(x);
+      printStr(",");
+      printInt(y);
+      printStr("\n");
+    }
+  }
+}

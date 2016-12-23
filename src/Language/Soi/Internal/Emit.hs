@@ -83,6 +83,10 @@ emitBind gblTab (tn,(n, Right (ty, rv))) = singleton $
     , G.initializer = Just (emitVar gblTab tn ty rv)
     }
 
+emitVar :: GlobalSymbolTable -> Text -> L.Type -> RValue -> C.Constant
+emitVar _ _ ty _ = C.Undef ty -- TODO: UNDEFINED
+-- emitVar gblTab tn ty rv = error "var not implemented"
+
 emitFn :: GlobalSymbolTable -> L.Type -> Text -> LocalSymbolTable -> FnBody -> ([L.BasicBlock],[(L.Name,ByteString)])
 emitFn gblTab retTy tn argTab body = finalize . execCodegen gblTab tn argTab $ llBody
   where
@@ -98,18 +102,21 @@ emitRValueAndRet retTy rv =
     setTerm (L.Do (L.Ret (Just llRv) []))
 
 emitBlockAndRet :: StmtBlock -> Codegen ()
-emitBlockAndRet b =
+emitBlockAndRet (StmtBlock ss) =
   do
-    emitBlock b
+    emitBlock ss
     setTerm (L.Do (L.Ret Nothing []))
 
-emitBlock :: StmtBlock -> Codegen ()
-emitBlock (StmtBlock ss) =
+emitBlock :: Seq Statement -> Codegen ()
+emitBlock ss =
   do
     newScope
     mapM_ emitStmt ss
     endScope
 
+--------------------------------------------------------------------------------
+-- Statements
+--------------------------------------------------------------------------------
 
 emitStmt :: Statement -> Codegen ()
 -- emitStmt s | traceShow s False = error "impossible"
@@ -126,7 +133,7 @@ emitStmt (StAssign (LvVa (IdVar v)) rv) =
     b <- lookupVar v
     store (bindToOp b) rvOp
 
-emitStmt (StArithAssign lv ao rv) = emitStmt (StAssign lv (RvBinOp (BoAo ao) (RvLVal lv) rv))
+emitStmt (StArithAssign lv ao rv) = emitStmt (StAssign lv (RvBinOp (Bao ao) (RvLVal lv) rv))
 
 emitStmt (StLoop ml stmt) =
   do
@@ -159,36 +166,22 @@ emitStmt (StContinue ml) =
 
 emitStmt (StIf (IfStmt {..})) =
   do
-    condLLBlkNm <- uniqueName (Just "if.cond")
-    thenLLBlkNm <- uniqueName (Just "if.then")
-    elseLLBlkNm <- uniqueName (Just "if.else")
+    thenLLBlkNm <- uniqueName (Just "ifs.then")
+    elseLLBlkNm <- uniqueName (Just "ifs.else")
     endLLBlkNm <- uniqueName (Just "if.end")
-    emitCondLLBlock condLLBlkNm ifsCond thenLLBlkNm (maybe endLLBlkNm (const elseLLBlkNm) ifsElse)
-    emitNewLLBlock thenLLBlkNm (emitStmt ifsThen) endLLBlkNm
-    maybe (return ()) (\b -> emitNewLLBlock elseLLBlkNm (emitStmt b) endLLBlkNm) ifsElse
+    emitLLTermCondBr (emitRValue ifsCond) thenLLBlkNm elseLLBlkNm
+    emitNewLLBlock_ thenLLBlkNm (emitStmt ifsThen) endLLBlkNm
+    emitNewLLBlock_ elseLLBlkNm (maybe (return ()) emitStmt ifsElse) endLLBlkNm
     addNewBlock endLLBlkNm
 
-emitStmt (StBlock sb) = emitBlock sb
+emitStmt (StBlock (StmtBlock ss)) = emitBlock ss
 emitStmt (StExpr rv) = void $ emitRValue rv
 
 emitStmt x = throwError ("stmt "++show x++" not implemented")
 
-emitCondLLBlock :: L.Name -> RValue -> L.Name -> L.Name -> Codegen ()
-emitCondLLBlock condBlkNm cond trueBlkNm falseBlkNm =
-  do
-    setTerm (L.Do (L.Br condBlkNm []))
-    addNewBlock condBlkNm
-    condOp <- emitRValue cond
-    checkType I1 (opType condOp)
-    setTerm (L.Do (L.CondBr condOp trueBlkNm falseBlkNm []))
-
-emitNewLLBlock :: L.Name -> Codegen () -> L.Name -> Codegen ()
-emitNewLLBlock blockNm stmts nextBlkNm =
-  do
-    addNewBlock blockNm
-    stmts
-    setTerm (L.Do (L.Br nextBlkNm []))
-
+--------------------------------------------------------------------------------
+-- RValues
+--------------------------------------------------------------------------------
 
 emitRValue :: RValue -> Codegen L.Operand
 -- emitRValue s | traceShow s False = error "impossible"
@@ -198,6 +191,11 @@ emitRValue (RvLVal (LvVa (IdVar v))) =
     b <- lookupVar v
     load (bindType b) (bindToOp b)
 
+emitRValue (RvBlock (ExprBlock {..})) =
+  do
+    emitBlock eblkStmts
+    emitRValue eblkReturn
+
 emitRValue (RvCall (CallNormal (RvLVal (LvVa (IdVar f))) params)) =
   do
     b <- lookupVar f
@@ -206,25 +204,118 @@ emitRValue (RvCall (CallNormal (RvLVal (LvVa (IdVar f))) params)) =
     sequence_ (zipWith checkType (map opType paramOps) argTys)
     call rty (bindToOp b) paramOps
 
-emitRValue (RvBinOp bo v1 v2) =
+emitRValue (RvIf (IfExpr {..})) =
+  do
+    thenLLBlkNm <- uniqueName (Just "ife.then")
+    elseLLBlkNm <- uniqueName (Just "ife.else")
+    endLLBlkNm <- uniqueName (Just "ife.end")
+    emitLLTermCondBr (emitRValue ifeCond) thenLLBlkNm elseLLBlkNm
+    thenOp <- emitNewLLBlock thenLLBlkNm (emitRValue ifeThen) endLLBlkNm
+    elseOp <- emitNewLLBlock elseLLBlkNm (emitRValue ifeElse) endLLBlkNm
+    checkType (opType thenOp) (opType elseOp)
+    addNewBlock endLLBlkNm
+    phi (opType thenOp) [(thenOp,thenLLBlkNm),(elseOp,elseLLBlkNm)]
+
+emitRValue (RvBinOp (Bao (Bano bano)) v1 v2) =
   do
     v1Op <- emitRValue v1
     v2Op <- emitRValue v2
     case (opType v1Op, opType v2Op) of
-          (I64, I64) -> bo2illo bo v1Op v2Op
-          (F64, F64) -> bo2fllo bo v1Op v2Op
-          _          -> throwError "numerical operation on non-numerical type"
+      (I64,I64) -> bano2llio bano v1Op v2Op
+      (F64,F64) -> bano2llfo bano v1Op v2Op
+      _         -> throwError "numerical operation on non-numerical type"
+
+emitRValue (RvBinOp (Bao (Babo babo)) v1 v2) =
+  do
+    v1Op <- emitRValue v1
+    v2Op <- emitRValue v2
+    case (opType v1Op, opType v2Op) of
+      (I1 ,I1 ) -> babo2llbo babo v1Op v2Op
+      (I64,I64) -> babo2llio babo v1Op v2Op
+      _         -> throwError "bitwise operation on non-bit-like type"
+
+emitRValue (RvBinOp (Bao (Baso baso)) v1 v2) =
+  do
+    v1Op <- emitRValue v1
+    v2Op <- emitRValue v2
+    case (opType v1Op, opType v2Op) of
+      (I64,I64) -> baso2llio baso v1Op v2Op
+      _         -> throwError "bitwise operation on non-integral type"
+
+emitRValue (RvBinOp (Blo BloAnd) v1 v2) =
+  do
+    curLLBlkNm <- currentBlockName
+    altLLBlkNm <- uniqueName (Just "and.alt")
+    endLLBlkNm <- uniqueName (Just "and.end")
+    emitLLTermCondBr (emitRValue v1) altLLBlkNm endLLBlkNm
+    v2Op <- emitNewLLBlock altLLBlkNm (emitRValue v2) endLLBlkNm
+    checkType I1 (opType v2Op)
+    addNewBlock endLLBlkNm
+    phi I1 [((bconst False),curLLBlkNm),(v2Op,altLLBlkNm)]
+
+emitRValue (RvBinOp (Blo BloOr) v1 v2) =
+  do
+    curLLBlkNm <- currentBlockName
+    altLLBlkNm <- uniqueName (Just "or.alt")
+    endLLBlkNm <- uniqueName (Just "or.end")
+    emitLLTermCondBr (emitRValue v1) endLLBlkNm altLLBlkNm
+    v2Op <- emitNewLLBlock altLLBlkNm (emitRValue v2) endLLBlkNm
+    checkType I1 (opType v2Op)
+    addNewBlock endLLBlkNm
+    phi I1 [((bconst True),curLLBlkNm),(v2Op,altLLBlkNm)]
+
+emitRValue (RvBinOp (Bco (Bceo bceo)) v1 v2) =
+  do
+    v1Op <- emitRValue v1
+    v2Op <- emitRValue v2
+    case (opType v1Op, opType v2Op) of
+      (I1 ,I1 ) -> icmp (bceo2llip bceo) v1Op v2Op
+      (I64,I64) -> icmp (bceo2llip bceo) v1Op v2Op
+      (F64,F64) -> fcmp (bceo2llfp bceo) v1Op v2Op
+      _         -> throwError "equality operation on non-primitive type"
+
+emitRValue (RvBinOp (Bco (Bcoo bcoo)) v1 v2) =
+  do
+    v1Op <- emitRValue v1
+    v2Op <- emitRValue v2
+    case (opType v1Op, opType v2Op) of
+      (I64,I64) -> icmp (bcoo2llip bcoo) v1Op v2Op
+      (F64,F64) -> fcmp (bcoo2llfp bcoo) v1Op v2Op
+      _         -> throwError "numerical operation on non-numerical type"
+
+emitRValue (RvUnOp UoPos v) =
+  do
+    vOp <- emitRValue v
+    case opType vOp of
+      I64 -> return vOp
+      F64 -> return vOp
+      _   -> throwError "numerical operation on non-numerical type"
 
 emitRValue (RvUnOp UoNeg v) =
   do
     vOp <- emitRValue v
     case opType vOp of
-      I64 -> isub (iconst 0) vOp
-      F64 -> fsub (fconst 0) vOp
+      I64 -> ineg vOp
+      F64 -> fneg vOp
       _   -> throwError "numerical operation on non-numerical type"
+
+emitRValue (RvUnOp UoInv v) =
+  do
+    vOp <- emitRValue v
+    case opType vOp of
+      I64 -> iinv vOp
+      _   -> throwError "bitwise operation on non-integral type"
+
+emitRValue (RvUnOp UoNot v) =
+  do
+    vOp <- emitRValue v
+    case opType vOp of
+      I1 -> bnot vOp
+      _  -> throwError "boolean operation on non-boolean type"
 
 emitRValue (RvLit l) =
   case l of
+    LitBool b   -> return (bconst b)
     LitInt i    -> return (iconst i)
     LitDouble f -> return (fconst f)
     LitString t -> strconst t
@@ -232,41 +323,79 @@ emitRValue (RvLit l) =
 
 emitRValue x = throwError ("rvalue "++show x++" not implemented")
 
-bo2illo :: BinOp -> L.Operand -> L.Operand -> Codegen L.Operand
-bo2illo (BoAo AoAdd) = iadd
-bo2illo (BoAo AoSub) = isub
-bo2illo (BoAo AoMul) = imul
-bo2illo (BoAo AoDiv) = idiv
-bo2illo (BoAo AoRem) = irem
-bo2illo (BoCo co) = icmp ip
-  where
-    ip = case co of
-      CoEQ -> IP.EQ
-      CoNE -> IP.NE
-      CoLT -> IP.SLT
-      CoLE -> IP.SLE
-      CoGT -> IP.SGT
-      CoGE -> IP.SGE
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
 
-bo2fllo :: BinOp -> L.Operand -> L.Operand -> Codegen L.Operand
-bo2fllo (BoAo AoAdd) = fadd
-bo2fllo (BoAo AoSub) = fsub
-bo2fllo (BoAo AoMul) = fmul
-bo2fllo (BoAo AoDiv) = fdiv
-bo2fllo (BoAo AoRem) = frem
-bo2fllo (BoCo co) = fcmp fp
-  where
-    fp = case co of
-      CoEQ -> FPP.OEQ
-      CoNE -> FPP.ONE
-      CoLT -> FPP.OLT
-      CoLE -> FPP.OLE
-      CoGT -> FPP.OGT
-      CoGE -> FPP.OGE
+bano2llio :: BinArithNumOp -> L.Operand -> L.Operand -> Codegen L.Operand
+bano2llio BanoAdd = iadd
+bano2llio BanoSub = isub
+bano2llio BanoMul = imul
+bano2llio BanoDiv = idiv
+bano2llio BanoRem = irem
 
-emitVar :: GlobalSymbolTable -> Text -> L.Type -> RValue -> C.Constant
-emitVar _ _ ty _ = C.Undef ty -- TODO: UNDEFINED
--- emitVar gblTab tn ty rv = error "var not implemented"
+bano2llfo :: BinArithNumOp -> L.Operand -> L.Operand -> Codegen L.Operand
+bano2llfo BanoAdd = fadd
+bano2llfo BanoSub = fsub
+bano2llfo BanoMul = fmul
+bano2llfo BanoDiv = fdiv
+bano2llfo BanoRem = frem
+
+babo2llbo :: BinArithBitOp -> L.Operand -> L.Operand -> Codegen L.Operand
+babo2llbo BaboAnd = band
+babo2llbo BaboOr  = bor
+babo2llbo BaboXor = bxor
+
+babo2llio :: BinArithBitOp -> L.Operand -> L.Operand -> Codegen L.Operand
+babo2llio BaboAnd = iand
+babo2llio BaboOr  = ior
+babo2llio BaboXor = ixor
+
+baso2llio :: BinArithShiftOp -> L.Operand -> L.Operand -> Codegen L.Operand
+baso2llio BasoShl = ishl
+baso2llio BasoShr = ishr
+
+bceo2llip :: BinCmpEqOp -> IP.IntegerPredicate
+bceo2llip BceoEQ = IP.EQ
+bceo2llip BceoNE = IP.NE
+
+bceo2llfp :: BinCmpEqOp -> FPP.FloatingPointPredicate
+bceo2llfp BceoEQ = FPP.OEQ
+bceo2llfp BceoNE = FPP.ONE
+
+bcoo2llip :: BinCmpOrdOp -> IP.IntegerPredicate
+bcoo2llip BcooLT = IP.SLT
+bcoo2llip BcooLE = IP.SLE
+bcoo2llip BcooGT = IP.SGT
+bcoo2llip BcooGE = IP.SGE
+
+bcoo2llfp :: BinCmpOrdOp -> FPP.FloatingPointPredicate
+bcoo2llfp BcooLT = FPP.OLT
+bcoo2llfp BcooLE = FPP.OLE
+bcoo2llfp BcooGT = FPP.OGT
+bcoo2llfp BcooGE = FPP.OGE
+
+emitLLTermCondBr :: Codegen L.Operand -> L.Name -> L.Name -> Codegen ()
+emitLLTermCondBr cond trueBlkNm falseBlkNm =
+  do
+    condOp <- cond
+    checkType I1 (opType condOp)
+    setTerm (L.Do (L.CondBr condOp trueBlkNm falseBlkNm []))
+
+emitNewLLBlock :: L.Name -> Codegen a -> L.Name -> Codegen a
+emitNewLLBlock blockNm code nextBlkNm =
+  do
+    addNewBlock blockNm
+    r <- code
+    setTerm (L.Do (L.Br nextBlkNm []))
+    return r
+
+emitNewLLBlock_ :: L.Name -> Codegen a -> L.Name -> Codegen ()
+emitNewLLBlock_ blockNm code nextBlkNm =
+  do
+    addNewBlock blockNm
+    void code
+    setTerm (L.Do (L.Br nextBlkNm []))
 
 type BindInfo = (L.Name, Either (L.Type, [(Text,LocalBinding)], FnBody) (L.Type, RValue))
 gblBindsInfo :: HashMap IdVar AstBind -> HashMap Text BindInfo
@@ -306,6 +435,7 @@ convData (Data {..}) = L.TypeDefinition llDataName (Just (L.StructureType False 
 dataToType :: IdData -> L.Type
 dataToType (IdData {..}) =
   if
+    | unIdData == "Bool"   -> I1
     | unIdData == "Int"    -> I64
     | unIdData == "Double" -> F64
     | unIdData == "String" -> ptr I8
