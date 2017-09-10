@@ -50,8 +50,8 @@ setInput inp = modify (\s->s{input=inp})
 
 data AlexInput = AI
   { loc :: !SrcLoc
-  , buf :: !LByteString
-  , pos :: !Int64
+  , buf :: !ByteString
+  , pos :: !Int
   }
   deriving (Show, Eq)
 
@@ -62,7 +62,7 @@ data SrcLoc = SrcLoc
   }
   deriving (Show, Eq)
 
-runParser :: P a -> String -> LByteString -> Either ParseError a
+runParser :: P a -> String -> ByteString -> Either ParseError a
 runParser p name contents = evalP p startState
   where
     startState = ParseState startAi

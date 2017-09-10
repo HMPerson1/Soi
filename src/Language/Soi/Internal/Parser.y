@@ -4,6 +4,7 @@ module Language.Soi.Internal.Parser
   ) where
 
 import           ClassyPrelude
+import           Prelude                          ((!!))
 
 import           Language.Soi.Internal.Lexer
 import           Language.Soi.Internal.ParseMonad

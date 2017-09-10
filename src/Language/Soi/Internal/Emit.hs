@@ -10,19 +10,20 @@ module Language.Soi.Internal.Emit (emit) where
 
 import           ClassyPrelude
 
-import           Control.Arrow                           ((+++))
-import           Control.Monad.Except                    (throwError)
+import           Control.Arrow                   ((+++))
+import           Control.Monad.Except            (throwError)
+import qualified Data.ByteString.Short           as SBS
 
-import qualified LLVM.General.AST                        as L
-import qualified LLVM.General.AST.Constant               as C
-import qualified LLVM.General.AST.FloatingPointPredicate as FPP
-import qualified LLVM.General.AST.Global                 as G
-import qualified LLVM.General.AST.IntegerPredicate       as IP
-import qualified LLVM.General.AST.Linkage                as L
+import qualified LLVM.AST                        as L
+import qualified LLVM.AST.Constant               as C
+import qualified LLVM.AST.FloatingPointPredicate as FPP
+import qualified LLVM.AST.Global                 as G
+import qualified LLVM.AST.IntegerPredicate       as IP
+import qualified LLVM.AST.Linkage                as L
 
-import qualified Language.Soi.Internal.StdLib            as StdLib
+import qualified Language.Soi.Internal.StdLib    as StdLib
 
-import           LLVM.General.AST.Type                   (ptr)
+import           LLVM.AST.Type                   (ptr)
 
 import           Language.Soi.Ast
 import           Language.Soi.Internal.Codegen
@@ -33,7 +34,7 @@ import           Language.Soi.Internal.Prescan
 
 emit :: String -> File -> L.Module
 emit modName file = L.defaultModule
-  { L.moduleName = modName
+  { L.moduleName = SBS.toShort (encodeUtf8 (pack modName))
   , L.moduleDefinitions = StdLib.headers
                           ++ (map (convData . snd) . mapToList $ fileData)
                           ++ (concatMap (emitBind gblSymTab) . mapToList $ info)
@@ -70,7 +71,7 @@ emitBind gblTab (tn,(n, Left (ret, argTab, body))) = fnDef:strsDef
       L.GlobalDefinition $ L.globalVariableDefaults
         { G.name = sn
         , G.linkage = L.Private
-        , G.hasUnnamedAddr = True
+        , G.unnamedAddr = Just G.GlobalAddr
         , G.isConstant = True
         , G.type' = L.ArrayType (fromIntegral (length bytes)) I8
         , G.initializer = Just (C.Array I8 (map (C.Int 8 . fromIntegral) (unpack bytes)))
@@ -91,7 +92,7 @@ emitFn :: GlobalSymbolTable -> L.Type -> Text -> LocalSymbolTable -> FnBody -> (
 emitFn gblTab retTy tn argTab body = finalize . execCodegen gblTab tn argTab $ llBody
   where
     llBody = case body of
-      Left x -> emitRValueAndRet retTy x
+      Left x  -> emitRValueAndRet retTy x
       Right x -> checkType retTy L.VoidType >> emitBlockAndRet x
 
 emitRValueAndRet :: L.Type -> RValue -> Codegen ()
@@ -402,7 +403,7 @@ gblBindsInfo :: HashMap IdVar AstBind -> HashMap Text BindInfo
 gblBindsInfo = mapFromList . map conv . mapToList
   where
     conv :: (IdVar, AstBind) -> (Text, BindInfo)
-    conv = unIdVar . fst &&& (L.Name . unpack . unIdVar *** (infoFn +++ infoDecl))
+    conv = unIdVar . fst &&& (mkTextName . unIdVar *** (infoFn +++ infoDecl))
 
     infoDecl :: (VaDecl, RValue) -> (L.Type, RValue)
     infoDecl = first (dataToType . vdlType)
@@ -420,7 +421,7 @@ gblBindsInfo = mapFromList . map conv . mapToList
         params = map (second (uncurry LocalBinding))
                  . mappend selfParam
                  . map (unIdVar . vdlName
-                        &&& ((dataToType . vdlType) &&& (L.Name . unpack . unIdVar . vdlName)))
+                        &&& ((dataToType . vdlType) &&& (mkTextName . unIdVar . vdlName)))
                  . toList
                  $ fnpRest
       in
@@ -429,7 +430,7 @@ gblBindsInfo = mapFromList . map conv . mapToList
 convData :: Data -> L.Definition
 convData (Data {..}) = L.TypeDefinition llDataName (Just (L.StructureType False llFields))
   where
-    llDataName = L.Name (unpack (unIdData dataName))
+    llDataName = mkTextName (unIdData dataName)
     llFields = map (dataToType . vdlType) .toList $ dataFields
 
 dataToType :: IdData -> L.Type
@@ -440,7 +441,7 @@ dataToType (IdData {..}) =
     | unIdData == "Double" -> F64
     | unIdData == "String" -> ptr I8
     | unIdData == "Unit"   -> L.VoidType
-    | otherwise            -> L.NamedTypeReference (L.Name (unpack unIdData))
+    | otherwise            -> L.NamedTypeReference (mkTextName unIdData)
 
 checkType :: L.Type -> L.Type -> Codegen ()
 checkType ty1 ty2 = when (ty1 /= ty2) (throwError ("("++show ty1++") /= ("++show ty2++")"))

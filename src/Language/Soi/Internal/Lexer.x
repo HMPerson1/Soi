@@ -86,14 +86,14 @@ tokens :-
   @decimal                      { tokF (TokLitInt    . read . unpack . decodeUtf8) }
   @floating                     { tokF (TokLitDouble . read . unpack . decodeUtf8) }
   \" (\\.|[^\\\"])* \"          { string }
-  @dataid                       { tokF (TokIdData . IdData . toStrict . decodeUtf8) }
-  @varid                        { tokF (TokIdVar  . IdVar  . toStrict . decodeUtf8) }
-  \' @varid                     { tokF (TokLabel  . Label  . toStrict . decodeUtf8 . tailEx) }
+  @dataid                       { tokF (TokIdData . IdData . decodeUtf8) }
+  @varid                        { tokF (TokIdVar  . IdVar  . decodeUtf8) }
+  \' @varid                     { tokF (TokLabel  . Label  . decodeUtf8 . tailEx) }
 
 {
-type Action = LByteString -> Int64 -> AlexInput -> P Token
+type Action = ByteString -> Int -> AlexInput -> P Token
 
-tokF :: (LByteString -> TokenClass) -> Action
+tokF :: (ByteString -> TokenClass) -> Action
 tokF f buf1 len inp2@(AI loc2 _ _) =
   do
     setInput inp2

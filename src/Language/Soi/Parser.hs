@@ -7,6 +7,6 @@ import           ClassyPrelude
 import           Language.Soi.Internal.ParseMonad
 import           Language.Soi.Internal.Parser
 
-parseFile :: String -> LByteString -> Either ParseError File
+parseFile :: String -> ByteString -> Either ParseError File
 parseFile = runParser parseFileP
 

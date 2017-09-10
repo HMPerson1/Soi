@@ -4,7 +4,6 @@ module Main where
 
 import           ClassyPrelude
 
-import           Data.Either.Combinators    (unlessRight)
 import           System.Directory           (removeFile)
 import           System.Environment         (getProgName)
 import           System.Exit                (die)
@@ -12,8 +11,8 @@ import           System.IO                  (openTempFile)
 import           System.Process             (callCommand)
 
 import qualified Control.Monad.LLVM         as L
-import qualified LLVM.General.PassManager   as P
-import qualified LLVM.General.Transforms    as T
+import qualified LLVM.PassManager           as P
+import qualified LLVM.Transforms            as T
 
 import           Language.Soi.Internal.Emit
 import           Language.Soi.Parser
@@ -38,18 +37,17 @@ main =
     let llvmIr = emit inFile ast
     -- print llvmIr
 
-    res <- L.runL $ do
+    L.runL $ do
       c   <- L.context
       m   <- L.moduleFromAst c llvmIr
       lib <- L.moduleFromLLVMAssembly c (L.File libFile)
-      tm  <- L.hostTargetMachine
+      tm  <- L.hostTargetMachineWithPic
       dl  <- L.getTargetMachineDataLayout tm
-      tt  <- L.getDefaultTargetTriple
-      li  <- L.getTargetLibraryInfo tt
+      li  <- L.getTargetLibraryInfo =<< L.getTargetMachineTriple tm
 
       -- L.writeLLVMAssemblyToFile (L.File (root++"-u.ll")) m
-      -- lift $ putStrLn "linking..."
-      L.linkModules True m lib
+      -- sayErr "linking..."
+      L.linkModules m lib
       let
         ps1s = P.PassSetSpec
           { P.transforms = [T.InternalizeFunctions ["main"]]
@@ -64,23 +62,23 @@ main =
           , P.targetLibraryInfo = Just li
           , P.targetMachine = Just tm
           }
+      -- sayErr "optimizing..."
       opt1r <- L.runPasses ps1s m
       opt2r <- L.runPasses ps2s m
-      unless (opt1r && opt2r) . lift $ hPutStrLn stderr ("optimizing failed"::Text)
-      -- lift $ putStrLn "writing..."
+      unless (opt1r && opt2r) $ sayErr "optimizing failed"
+      -- sayErr "writing..."
       -- L.writeLLVMAssemblyToFile (L.File (root++".ll")) m
-      (asmFile, asmH) <- lift $ openTempFile "" (root ++ ".s")
-      lift $ hClose asmH
+      (asmFile, asmH) <- liftIO $ openTempFile "" (root ++ ".s")
+      liftIO $ hClose asmH
       L.writeTargetAssemblyToFile tm (L.File asmFile) m
-      lift $ callCommand ("cc " ++ asmFile ++ " -o " ++ root)
-      lift $ removeFile asmFile
-    unlessRight res error
+      liftIO $ callCommand ("cc " ++ asmFile ++ " -o " ++ root)
+      liftIO $ removeFile asmFile
 
 {-
-lexTest :: LByteString -> IO ()
+lexTest :: ByteString -> IO ()
 lexTest = putStrLn . unlines . either (:[]) (map tshow) . lexAll
 
-lexAll :: LByteString -> Either Text [((Int,Int),TokenClass)]
+lexAll :: ByteString -> Either Text [((Int,Int),TokenClass)]
 lexAll txt = mapLeft (\(ParseError e) -> fromString e) $ runParser go "<stdin>" txt
   where
     go :: P [((Int,Int),TokenClass)]

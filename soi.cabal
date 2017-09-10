@@ -31,7 +31,7 @@ library
                      , bytestring
                      , containers
                      , lens
-                     , llvm-general-pure
+                     , llvm-hs-pure
                      , mtl
                      , text
   build-tools:         alex, happy
@@ -49,8 +49,8 @@ executable soi-exe
                      , bytestring
                      , directory
                      , either
-                     , llvm-general
-                     , llvm-general-pure
+                     , llvm-hs
+                     , llvm-hs-pure
                      , mtl
                      , process
   default-language:    Haskell2010

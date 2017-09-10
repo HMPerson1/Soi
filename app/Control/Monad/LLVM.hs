@@ -4,10 +4,10 @@ module Control.Monad.LLVM
   , context
   , moduleFromAst
   , moduleFromLLVMAssembly
-  , hostTargetMachine
+  , hostTargetMachineWithPic
   , getTargetMachineDataLayout
   , getTargetLibraryInfo
-  , getDefaultTargetTriple
+  , getTargetMachineTriple
   , linkModules
   , runPasses
   , writeTargetAssemblyToFile
@@ -18,64 +18,61 @@ where
 import           ClassyPrelude
 
 import           Control.Monad.Cont
-import           Control.Monad.Except
+import           Data.ByteString.Short (ShortByteString)
 
-import qualified LLVM.General.AST            as AST
-import qualified LLVM.General.AST.DataLayout as L
-import qualified LLVM.General.Context        as L
-import qualified LLVM.General.Module         as L
-import qualified LLVM.General.PassManager    as L
-import qualified LLVM.General.Target         as L
+import qualified LLVM.AST              as AST
+import qualified LLVM.AST.DataLayout   as L
+import qualified LLVM.Context          as L
+import qualified LLVM.Module           as L
+import qualified LLVM.PassManager      as L
+import qualified LLVM.Target           as L
 
-type Lr r e m a = ((a -> m (Either e r)) -> ExceptT e m (Either e r))
+import qualified LLVM.CodeGenOpt       as CodeGenOpt
+import qualified LLVM.CodeModel        as CodeModel
+import qualified LLVM.Relocation       as Reloc
 
-type L r m a = ContT (Either String r) m a
+type L r a = ContT r IO a
 
-runL :: (Monad m) => L r m r -> m (Either String r)
-runL l = runContT l (return . return)
+runL :: L r r -> IO r
+runL l = runContT l return
 
-lr2l :: (Functor m) => Lr r String m a -> L r m a
-lr2l func = ContT (fmap join . runExceptT . func)
+context :: L r L.Context
+context = ContT L.withContext
 
-{-
-l2lr :: (Functor m) => L r m a -> Lr r String m a
-l2lr l = ExceptT . fmap return . runContT l
--}
+moduleFromAst :: L.Context -> AST.Module -> ContT r IO L.Module
+moduleFromAst c m = ContT $ L.withModuleFromAST c m
 
-liftET :: (Monad m) => ExceptT String m a -> L r m a
-liftET e = ContT (\f -> runExceptT e >>= either (return . Left) f)
+moduleFromLLVMAssembly :: L.Context -> L.File -> L r L.Module
+moduleFromLLVMAssembly c f = ContT $ L.withModuleFromLLVMAssembly c f
 
-context :: L r IO L.Context
-context = lr2l $ lift . L.withContext
+-- copied from LLVM.Target.withHostTargetMachine
+hostTargetMachineWithPic :: ContT a IO L.TargetMachine
+hostTargetMachineWithPic = ContT $ \f -> do
+  L.initializeAllTargets
+  triple <- L.getProcessTargetTriple
+  cpu <- L.getHostCPUName
+  features <- L.getHostCPUFeatures
+  (target, _) <- L.lookupTarget Nothing triple
+  L.withTargetOptions $ \options ->
+    L.withTargetMachine target triple cpu features options Reloc.PIC CodeModel.Default CodeGenOpt.Default f
 
-moduleFromAst :: L.Context -> AST.Module -> L r IO L.Module
-moduleFromAst c m = lr2l $ L.withModuleFromAST c m
-
-moduleFromLLVMAssembly :: L.Context -> L.File -> L r IO L.Module
-moduleFromLLVMAssembly c f = lr2l $ ee2e . L.withModuleFromLLVMAssembly c f
-  where
-    ee2e = withExceptT (either id show)
-
-hostTargetMachine :: L r IO L.TargetMachine
-hostTargetMachine = lr2l L.withHostTargetMachine
-
-getTargetMachineDataLayout :: L.TargetMachine -> L r IO L.DataLayout
+getTargetMachineDataLayout :: L.TargetMachine -> L r L.DataLayout
 getTargetMachineDataLayout tm = lift $ L.getTargetMachineDataLayout tm
 
-getTargetLibraryInfo :: String -> L r IO L.TargetLibraryInfo
-getTargetLibraryInfo tt = lr2l $ lift . L.withTargetLibraryInfo tt
+getTargetLibraryInfo :: ShortByteString -> L r L.TargetLibraryInfo
+getTargetLibraryInfo tt = ContT $ L.withTargetLibraryInfo tt
 
-getDefaultTargetTriple :: L r IO String
-getDefaultTargetTriple = lift L.getDefaultTargetTriple
+getTargetMachineTriple :: L.TargetMachine -> L r ShortByteString
+getTargetMachineTriple = lift . L.getTargetMachineTriple
 
-linkModules :: Bool -> L.Module -> L.Module -> L () IO ()
-linkModules preserveRight m m' = liftET $ L.linkModules preserveRight m m'
+linkModules :: L.Module -> L.Module -> L () ()
+linkModules m1 m2 = lift $ L.linkModules m1 m2
 
-runPasses :: L.PassSetSpec -> L.Module -> L () IO Bool
+runPasses :: L.PassSetSpec -> L.Module -> L () Bool
 runPasses pss m = lift $ L.withPassManager pss $ \pm -> L.runPassManager pm m
 
-writeTargetAssemblyToFile :: L.TargetMachine -> L.File -> L.Module -> L () IO ()
-writeTargetAssemblyToFile tm f m = liftET $ L.writeTargetAssemblyToFile tm f m
+writeTargetAssemblyToFile :: L.TargetMachine -> L.File -> L.Module -> L () ()
+writeTargetAssemblyToFile tm f m = lift $ L.writeTargetAssemblyToFile tm f m
 
-writeLLVMAssemblyToFile :: L.File -> L.Module -> L () IO ()
-writeLLVMAssemblyToFile f m = liftET $ L.writeLLVMAssemblyToFile f m
+writeLLVMAssemblyToFile :: L.File -> L.Module -> L () ()
+writeLLVMAssemblyToFile f m = lift $ L.writeLLVMAssemblyToFile f m

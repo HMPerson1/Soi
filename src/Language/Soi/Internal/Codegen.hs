@@ -9,34 +9,33 @@
 
 module Language.Soi.Internal.Codegen where
 
-import           ClassyPrelude
+import           ClassyPrelude                   hiding ((<|))
 
-import           Control.Lens                            (ASetter', Cons, Snoc,
-                                                          at, makeLenses, use,
-                                                          view)
-import           Control.Lens.Cons                       (_Cons, _head, _tail)
-import           Control.Lens.Fold                       (preuse)
-import           Control.Monad.Except                    (ExceptT, MonadError,
-                                                          catchError,
-                                                          runExceptT,
-                                                          throwError)
-import           Control.Monad.Reader                    (local)
-import           Control.Monad.State                     (MonadState, StateT,
-                                                          execStateT)
-import           Data.List                               (genericLength)
-import qualified Data.Sequence                           as Seq
+import           Control.Lens                    (ASetter', Cons, Snoc, at,
+                                                  makeLenses, use, view)
+import           Control.Lens.Cons               (_Cons, _head, _tail)
+import           Control.Lens.Fold               (preuse)
+import           Control.Monad.Except            (ExceptT, MonadError,
+                                                  catchError, runExceptT,
+                                                  throwError)
+import           Control.Monad.Reader            (local)
+import           Control.Monad.State             (MonadState, StateT,
+                                                  execStateT)
+import qualified Data.ByteString.Short           as SBS
+import           Data.List                       (genericLength)
+import qualified Data.Sequence                   as Seq
 
-import qualified LLVM.General.AST.CallingConvention      as CC
-import qualified LLVM.General.AST.Constant               as C
-import qualified LLVM.General.AST.Float                  as SF
-import           LLVM.General.AST.FloatingPointPredicate (FloatingPointPredicate)
-import           LLVM.General.AST.IntegerPredicate       (IntegerPredicate)
-import           LLVM.General.AST.Type                   (ptr)
-import qualified LLVM.General.AST.Type                   as T
+import qualified LLVM.AST.CallingConvention      as CC
+import qualified LLVM.AST.Constant               as C
+import qualified LLVM.AST.Float                  as SF
+import           LLVM.AST.FloatingPointPredicate (FloatingPointPredicate)
+import           LLVM.AST.IntegerPredicate       (IntegerPredicate)
+import           LLVM.AST.Type                   (ptr)
+import qualified LLVM.AST.Type                   as T
 
 import           Control.Lens.Operators
 
-import           LLVM.General.AST
+import           LLVM.AST
 
 --------------------------------------------------------------------------------
 -- Codegen Monad
@@ -140,15 +139,15 @@ finalize cs = (finalBlocks,toList(cs^.stringConstants))
 --------------------------------------------------------------------------------
 
 uniqueName :: Maybe Text -> Codegen Name
-uniqueName maybeString = mkName <$> mkId
+uniqueName maybeString = makeName <$> mkId
   where
     mkId :: Codegen Word
     mkId = (nameSupply . at maybeString <<%= Just . (+1) . fromMaybe 0) <&> fromMaybe 0
 
-    mkName :: Word -> Name
-    mkName w = case maybeString of
+    makeName :: Word -> Name
+    makeName w = case maybeString of
       Nothing -> UnName w
-      Just s  -> Name (unpack s ++ "." ++ show w)
+      Just s  -> mkTextName (s ++ "." ++ tshow w)
 
 currentBlockName :: Codegen Name
 currentBlockName = use (currentBlock . blockName)
@@ -309,9 +308,13 @@ endLoop = loopStack <~ (maybeThrow "no enclosing loop" $ preuse (loopStack . _ta
 -- LLVM Utils
 --------------------------------------------------------------------------------
 
-pattern F64 = FloatingPointType 64 IEEE
+pattern F64 :: Type
+pattern F64 = FloatingPointType T.DoubleFP
+pattern I64 :: Type
 pattern I64 = IntegerType 64
+pattern I8 :: Type
 pattern I8  = IntegerType 8
+pattern I1 :: Type
 pattern I1  = IntegerType 1
 
 bindToOp :: AnyBinding -> Operand
@@ -319,13 +322,13 @@ bindToOp (AL (LocalBinding ty nm)) = LocalReference (ptr ty) nm
 bindToOp (AG (GlobalBinding ty nm)) = ConstantOperand (C.GlobalReference (ptr ty) nm)
 
 bindType :: AnyBinding -> Type
-bindType (AL (LocalBinding ty _)) = ty
+bindType (AL (LocalBinding ty _))  = ty
 bindType (AG (GlobalBinding ty _)) = ty
 
 opType :: Operand -> Type
 opType (LocalReference ty _) = ty
-opType (ConstantOperand c) = constType c
-opType _ = error "metadata operands have no type"
+opType (ConstantOperand c)   = constType c
+opType _                     = error "metadata operands have no type"
 
 constType :: C.Constant -> Type
 constType (C.Int bits _) = IntegerType bits
@@ -379,7 +382,7 @@ strconst str =
   do
     nm <- use stringConstants
     fnNm <- view functionName
-    let name = Name (unpack fnNm ++ ".str" ++ show (Seq.length nm))
+    let name = mkTextName (fnNm ++ ".str" ++ tshow (Seq.length nm))
         bytes = encodeUtf8 str `snoc` 0
     stringConstants |>= (name,bytes)
     let b = AG (GlobalBinding (ArrayType (fromIntegral (length bytes)) I8) name)
@@ -401,3 +404,6 @@ l <|= e = l %= (e <|)
 
 maybeThrow :: MonadError e m => e -> m (Maybe b) -> m b
 maybeThrow e = (>>= maybe (throwError e) return)
+
+mkTextName :: Text -> Name
+mkTextName = Name . SBS.toShort . encodeUtf8

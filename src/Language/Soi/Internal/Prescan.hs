@@ -29,7 +29,7 @@ extractDatas (A.TlData d@(A.Data {..})) = checkInsertMap dataName d
 extractDatas _ = id
 
 extractBinds :: A.TopLevelBinding -> HashMap IdVar AstBind -> HashMap IdVar AstBind
-extractBinds (A.TlGlblVa d@(A.VaDecl {..}) init) = checkInsertMap vdlName (Right (d,init))
+extractBinds (A.TlGlblVa d@(A.VaDecl {..}) value) = checkInsertMap vdlName (Right (d,value))
 extractBinds (A.TlFunc f@(A.Function {..}))      = checkInsertMap fnName (Left (f,Nothing))
 extractBinds (A.TlImpl (A.Impl {..}))            = flip (foldr insertImplFn) implFns
   where

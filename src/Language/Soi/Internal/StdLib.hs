@@ -4,10 +4,10 @@ module Language.Soi.Internal.StdLib where
 
 import           ClassyPrelude
 
-import           LLVM.General.AST
-import qualified LLVM.General.AST.Constant     as C
-import qualified LLVM.General.AST.Global       as G
-import           LLVM.General.AST.Type
+import           LLVM.AST
+import qualified LLVM.AST.Constant     as C
+import qualified LLVM.AST.Global       as G
+import           LLVM.AST.Type
 
 import           Language.Soi.Internal.Codegen
 
