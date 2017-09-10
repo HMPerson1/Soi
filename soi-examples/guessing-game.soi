@@ -21,7 +21,7 @@ def main(): Unit = {
       printInt(guesses);
       printStr(" guesses left.\n");
     } else {
-      printStr("You are out of guesses!\nYou loose! :(\n");
+      printStr("You are out of guesses!\nYou lose! :(\n");
       break;
     }
   }
